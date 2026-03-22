@@ -1,0 +1,32 @@
+services:
+  monitor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: /app/docker/entrypoint-monitor.sh
+    ports:
+      - "3001:3001"
+    env_file: .env
+    environment:
+      SERVE_DASHBOARD: "true"
+      WS_PORT: "3001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: /app/docker/entrypoint-agent.sh
+    env_file: .env
+    environment:
+      MONITOR_WS_URL: "ws://monitor:3001"
+      AGENT_PROVIDER: "${AGENT_PROVIDER:-pi}"
+    depends_on:
+      monitor:
+        condition: service_healthy
+    restart: unless-stopped

@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: tasty-v2-monitor
+    runtime: docker
+    dockerfilePath: docker/Dockerfile
+    dockerCommand: /app/docker/entrypoint-monitor.sh
+    region: oregon
+    plan: starter
+    envVars:
+      - key: SERVE_DASHBOARD
+        value: "true"
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - fromGroup: tasty-v2-secrets
+    healthCheckPath: /
+
+  - type: worker
+    name: tasty-v2-agent
+    runtime: docker
+    dockerfilePath: docker/Dockerfile
+    dockerCommand: /app/docker/entrypoint-agent.sh
+    region: oregon
+    plan: starter
+    envVars:
+      - key: MONITOR_WS_URL
+        value: "ws://tasty-v2-monitor:10000"
+      - key: AGENT_PROVIDER
+        value: claude-sdk
+      - fromGroup: tasty-v2-secrets
+      - fromGroup: tasty-v2-llm
+
+envVarGroups:
+  - name: tasty-v2-secrets
+    envVars:
+      - key: TASTYTRADE_CLIENT_ID
+        sync: false
+      - key: TASTYTRADE_CLIENT_SECRET
+        sync: false
+      - key: TASTYTRADE_REFRESH_TOKEN
+        sync: false
+      - key: TASTYTRADE_ENV
+        value: sandbox
+
+  - name: tasty-v2-llm
+    envVars:
+      - key: PI_PROVIDER
+        value: anthropic
+      - key: PI_MODEL
+        value: claude-sonnet-4-20250514
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-4-20250514
+      - key: CLAUDE_MAX_BUDGET_USD
+        value: "0.50"

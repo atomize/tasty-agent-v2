@@ -1,0 +1,31 @@
+{
+  "name": "@tastytrade-monitor/claude-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/invoke.js",
+  "exports": {
+    ".": "./dist/invoke.js",
+    "./invoke": "./dist/invoke.js",
+    "./schema": "./dist/schema.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/runner.js",
+    "dev": "tsx src/runner.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@tastytrade-monitor/shared": "workspace:*",
+    "dotenv": "^16.6.1",
+    "ws": "^8.18.0",
+    "zod": "^3.24.3",
+    "zod-to-json-schema": "^3.24.5"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.2"
+  }
+}

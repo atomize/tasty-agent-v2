@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+.git
+.gitignore
+.cursor
+.pi
+*.log
+*.tsbuildinfo
+.DS_Store
+packages/monitor/alerts/*.json
+packages/monitor/alerts/*.jsonl
+packages/monitor/tokens/

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+*.log
+alerts/*.json
+alerts/*.jsonl
+packages/monitor/tokens/token.json
+.DS_Store
+*.tsbuildinfo
+.pnpmfile.cjs
+.pnpmrc
+.pi/
+.cursor/
+data/
+docs/REWRITE-PROMPT.md
+docs/REWRITE-PROMPT-2.md

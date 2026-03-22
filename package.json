@@ -1,0 +1,26 @@
+{
+  "name": "tastytrade-monitor",
+  "private": true,
+  "scripts": {
+    "monitor": "pnpm --filter @tastytrade-monitor/monitor run start",
+    "monitor:pipe": "pnpm --filter @tastytrade-monitor/monitor run start -- --mode pipe",
+    "monitor:file": "pnpm --filter @tastytrade-monitor/monitor run start -- --mode file",
+    "dashboard": "pnpm --filter @tastytrade-monitor/dashboard run dev",
+    "dev": "concurrently \"pnpm monitor\" \"pnpm dashboard\"",
+    "agent:setup": "pi install ./packages/pi-agent",
+    "agent:start": "cd packages/pi-agent && pi",
+    "agent:pipe": "pnpm monitor:pipe | (cd packages/pi-agent && pi --mode rpc --no-session)",
+    "agent:claude": "cd packages/claude-agent && npx tsx src/runner.ts",
+    "dev:full": "concurrently \"pnpm monitor\" \"pnpm dashboard\" \"pnpm agent:start\"",
+    "dev:claude": "concurrently \"pnpm monitor\" \"pnpm dashboard\" \"pnpm agent:claude\"",
+    "build": "pnpm --filter @tastytrade-monitor/shared build && pnpm --filter @tastytrade-monitor/monitor build && pnpm --filter @tastytrade-monitor/dashboard build && pnpm --filter @tastytrade-monitor/claude-agent build",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "better-sqlite3"]
+  }
+}
