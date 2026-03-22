@@ -18,9 +18,9 @@ COPY packages/claude-agent/ packages/claude-agent/
 COPY tsconfig.base.json ./
 
 RUN pnpm --filter @tastytrade-monitor/shared build \
+ && pnpm --filter @tastytrade-monitor/claude-agent build \
  && pnpm --filter @tastytrade-monitor/monitor build \
- && pnpm --filter @tastytrade-monitor/dashboard build \
- && pnpm --filter @tastytrade-monitor/claude-agent build
+ && pnpm --filter @tastytrade-monitor/dashboard build
 
 # -------------------------------------------------------------------
 FROM node:22-slim AS runtime
