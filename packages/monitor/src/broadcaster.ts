@@ -158,9 +158,15 @@ export function startBroadcaster(): void {
           pushAnalysis(msg.data as AgentAnalysis)
           broadcastRaw(String(raw))
         } else if (msg.type === 'alert' && msg.data) {
-          log.info(`Injected test alert for ${msg.data.trigger?.ticker ?? 'unknown'}`)
-          pushAlert(msg.data as OptionsAlert)
-          broadcastRaw(String(raw))
+          const alert = msg.data as OptionsAlert
+          log.info(`Injected test alert for ${alert.trigger?.ticker ?? 'unknown'}`)
+          pushAlert(alert)
+          broadcast({ type: 'alert', data: alert })
+          if (orchestratorHandler) {
+            Promise.resolve(orchestratorHandler(alert)).catch(err => {
+              log.error('Orchestrator dispatch error:', err)
+            })
+          }
         } else if (msg.type === 'agent_status' && msg.data) {
           agentStatus = msg.data as AgentStatus
           broadcastRaw(String(raw))

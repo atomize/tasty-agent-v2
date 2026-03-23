@@ -46,7 +46,7 @@ export function App() {
     connected, snapshots, alerts, analyses, account, uptime, env, isDelayed,
     multiTenant, oauthProviders, optionChain, agentStatus, agentConfig, authUser, authError,
     requestChain, sendRaw, login, register, logout,
-    saveAgentConfig, requestAgentConfig,
+    saveAgentConfig, requestAgentConfig, sendTestAlert,
   } = state
   const [activeTab, setActiveTab] = useState<Tab>('watchlist')
 
@@ -139,6 +139,7 @@ export function App() {
             config={agentConfig}
             onSave={saveAgentConfig}
             onRequest={requestAgentConfig}
+            onTestAlert={sendTestAlert}
           />
         )}
       </main>

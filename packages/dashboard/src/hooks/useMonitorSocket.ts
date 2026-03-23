@@ -29,6 +29,7 @@ export interface MonitorState {
   logout: () => void
   saveAgentConfig: (config: { provider: string; apiKey?: string; model?: string; maxBudgetUsd?: number; externalUrl?: string }) => void
   requestAgentConfig: () => void
+  sendTestAlert: (ticker: string) => void
 }
 
 function getWsUrl(): string {
@@ -110,6 +111,27 @@ export function useMonitorSocket(): MonitorState {
   const requestAgentConfig = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'request_agent_config' }))
+    }
+  }, [])
+
+  const sendTestAlert = useCallback((ticker: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'alert',
+        data: {
+          id: `test-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          version: '1.0',
+          trigger: { type: 'IV_SPIKE', ticker, description: `IV spiked 12% in 5 min (test alert)`, threshold: 10, observed: 12 },
+          severity: 'high',
+          strategies: ['supply_chain'],
+          supplyChainLayer: 'Layer 1 – GPU / Accelerator',
+          marketSnapshot: [{ ticker, price: 120, iv: 45, ivRank: 72, isDelayed: false, lastUpdated: new Date().toISOString() }],
+          optionChain: [{ expiration: '2026-04-17', daysToExpiry: 25, strikes: [{ strike: 120, callBid: 4.5, callAsk: 4.65, callDelta: 0.50, callIV: 0.44, putBid: 4.4, putAsk: 4.55, putDelta: -0.50, putIV: 0.45 }] }],
+          account: { netLiq: 50000, buyingPower: 25000, openPositions: [] },
+          agentContext: `## OPTIONS ALERT — IV_SPIKE on ${ticker}\n**Test alert** fired manually from dashboard.\nPrice ~$120, IV Rank 72, IV 45%.\nATM Apr 120C: $4.50/$4.65, delta 0.50\nATM Apr 120P: $4.40/$4.55, delta -0.50`,
+        },
+      }))
     }
   }, [])
 
@@ -220,6 +242,6 @@ export function useMonitorSocket(): MonitorState {
     connected, snapshots, alerts, analyses, account, uptime, env, isDelayed, multiTenant, oauthProviders,
     optionChain, agentStatus, agentConfig, authUser, authError,
     requestChain, sendRaw, login: loginFn, register: registerFn, logout,
-    saveAgentConfig, requestAgentConfig,
+    saveAgentConfig, requestAgentConfig, sendTestAlert,
   }
 }

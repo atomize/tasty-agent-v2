@@ -5,6 +5,7 @@ interface AgentSettingsProps {
   config: AgentConfigResponse | null
   onSave: (config: { provider: string; apiKey?: string; model?: string; maxBudgetUsd?: number; externalUrl?: string }) => void
   onRequest: () => void
+  onTestAlert: (ticker: string) => void
 }
 
 const MODELS = [
@@ -13,13 +14,14 @@ const MODELS = [
   'claude-haiku-3-20250422',
 ]
 
-export function AgentSettings({ config, onSave, onRequest }: AgentSettingsProps) {
+export function AgentSettings({ config, onSave, onRequest, onTestAlert }: AgentSettingsProps) {
   const [provider, setProvider] = useState<string>(config?.provider ?? 'none')
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState(config?.model ?? 'claude-sonnet-4-20250514')
   const [maxBudget, setMaxBudget] = useState(config?.maxBudgetUsd ?? 0.50)
   const [externalUrl, setExternalUrl] = useState(config?.externalUrl ?? '')
   const [saved, setSaved] = useState(false)
+  const [testFired, setTestFired] = useState(false)
 
   useEffect(() => {
     onRequest()
@@ -148,8 +150,8 @@ export function AgentSettings({ config, onSave, onRequest }: AgentSettingsProps)
         </div>
       )}
 
-      {/* Save button */}
-      <div className="pt-2">
+      {/* Save + Test buttons */}
+      <div className="pt-2 flex gap-3">
         <button
           type="button"
           onClick={handleSave}
@@ -161,6 +163,24 @@ export function AgentSettings({ config, onSave, onRequest }: AgentSettingsProps)
         >
           {saved ? 'Saved' : 'Save Configuration'}
         </button>
+
+        {provider !== 'none' && (
+          <button
+            type="button"
+            onClick={() => {
+              onTestAlert('NVDA')
+              setTestFired(true)
+              setTimeout(() => setTestFired(false), 3000)
+            }}
+            className={`px-4 py-2 text-sm font-medium rounded border transition-colors ${
+              testFired
+                ? 'border-green-600 text-green-400 bg-green-900/20'
+                : 'border-gray-700 text-gray-400 hover:border-amber-500/50 hover:text-amber-400 bg-transparent'
+            }`}
+          >
+            {testFired ? 'Alert Sent' : 'Fire Test Alert'}
+          </button>
+        )}
       </div>
     </div>
   )
