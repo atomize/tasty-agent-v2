@@ -11,7 +11,7 @@ let db: Database.Database | null = null
 export function getDb(): Database.Database {
   if (db) return db
 
-  const dataDir = resolve(__dirname, '..', '..', '..', 'data')
+  const dataDir = process.env.DATA_DIR || resolve(__dirname, '..', '..', '..', 'data')
   mkdirSync(dataDir, { recursive: true })
   const dbPath = resolve(dataDir, 'monitor.db')
 
@@ -118,11 +118,26 @@ export function findUserById(id: number): UserRow | undefined {
 export function upsertAgentConfig(
   userId: number,
   provider: string,
-  encryptedApiKey: string | null,
+  encryptedApiKey: string | null | undefined,
   model: string,
   maxBudgetUsd: number,
   externalUrl: string | null,
 ): AgentConfigRow {
+  if (encryptedApiKey === undefined) {
+    const stmt = getDb().prepare(`
+      INSERT INTO agent_configs (user_id, provider, model, max_budget_usd, external_url, updated_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(user_id) DO UPDATE SET
+        provider = excluded.provider,
+        model = excluded.model,
+        max_budget_usd = excluded.max_budget_usd,
+        external_url = excluded.external_url,
+        updated_at = datetime('now')
+      RETURNING *
+    `)
+    return stmt.get(userId, provider, model, maxBudgetUsd, externalUrl) as AgentConfigRow
+  }
+
   const stmt = getDb().prepare(`
     INSERT INTO agent_configs (user_id, provider, encrypted_api_key, model, max_budget_usd, external_url, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))

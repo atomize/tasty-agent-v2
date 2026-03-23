@@ -6,6 +6,10 @@ services:
     dockerCommand: /app/docker/entrypoint-monitor.sh
     region: oregon
     plan: starter
+    disk:
+      name: monitor-data
+      mountPath: /app/data
+      sizeGB: 1
     envVars:
       - key: SERVE_DASHBOARD
         value: "true"

@@ -303,10 +303,17 @@ function handleSaveAgentConfig(ws: WebSocket, cfg: Record<string, unknown>): voi
   const model = String(cfg.model ?? 'claude-sonnet-4-20250514')
   const maxBudget = Number(cfg.maxBudgetUsd ?? 0.5)
   const externalUrl = cfg.externalUrl ? String(cfg.externalUrl) : null
-  const encryptedKey = cfg.apiKey ? encrypt(String(cfg.apiKey)) : null
+
+  let encryptedKey: string | null | undefined
+  if (cfg.apiKey && typeof cfg.apiKey === 'string' && cfg.apiKey.length > 0) {
+    encryptedKey = encrypt(cfg.apiKey)
+    log.info(`Agent config saved for ${auth.email} (provider: ${provider}, new API key set)`)
+  } else {
+    encryptedKey = undefined
+    log.info(`Agent config saved for ${auth.email} (provider: ${provider}, key unchanged)`)
+  }
 
   upsertAgentConfig(auth.userId, provider, encryptedKey, model, maxBudget, externalUrl)
-  log.info(`Agent config saved for ${auth.email} (provider: ${provider})`)
 
   handleRequestAgentConfig(ws)
 }

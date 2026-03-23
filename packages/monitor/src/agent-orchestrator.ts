@@ -18,7 +18,11 @@ export function initOrchestrator(): void {
 
 async function dispatchAlert(alert: OptionsAlert): Promise<void> {
   const configs = getAllActiveConfigs()
-  if (configs.length === 0) return
+  if (configs.length === 0) {
+    log.info(`Alert ${alert.trigger.ticker}/${alert.trigger.type} — no active agent configs, skipping dispatch`)
+    return
+  }
+  log.info(`Dispatching alert ${alert.trigger.ticker}/${alert.trigger.type} to ${configs.length} agent(s)`)
 
   for (const cfg of configs) {
     const cooldownKey = `${cfg.user_id}:${alert.trigger.ticker}:${alert.trigger.type}`
