@@ -13,7 +13,7 @@ import { config } from './config.js'
 import { log } from './logger.js'
 import { isEncryptionEnabled, encrypt, maskApiKey } from './crypto.js'
 import { login, register, verifyToken } from './auth.js'
-import { getAgentConfig, upsertAgentConfig } from './db.js'
+import { getAgentConfig, upsertAgentConfig, findUserById } from './db.js'
 import type { JwtPayload } from './auth.js'
 import { handleOAuthRoute, getEnabledOAuthProviders } from './oauth.js'
 
@@ -171,8 +171,8 @@ export function startBroadcaster(): void {
           agentStatus = msg.data as AgentStatus
           broadcastRaw(String(raw))
         }
-      } catch {
-        // ignore malformed client messages
+      } catch (err) {
+        log.warn(`WS message error: ${(err as Error).message}`)
       }
     })
 
@@ -267,10 +267,18 @@ async function handleAuth(ws: WebSocket, msg: Record<string, unknown>): Promise<
     if (msg.type === 'auth_token' && typeof msg.token === 'string') {
       const payload = verifyToken(msg.token) as JwtPayload | null
       if (payload) {
-        clientAuth.set(ws, { userId: payload.userId, email: payload.email })
-        send(ws, { type: 'auth_result', data: { success: true, user: { id: payload.userId, email: payload.email } } } as WsMessage)
+        let userId = payload.userId
+        const existing = findUserById(userId)
+        if (!existing) {
+          log.info(`Token auth: user ${payload.email} (id=${userId}) not in DB, re-creating`)
+          const { findOrCreateOAuthUser } = await import('./db.js')
+          const user = findOrCreateOAuthUser('token-migration', String(userId), payload.email)
+          userId = user.id
+        }
+        clientAuth.set(ws, { userId, email: payload.email })
+        send(ws, { type: 'auth_result', data: { success: true, user: { id: userId, email: payload.email } } } as WsMessage)
         sendFullState(ws)
-        log.info(`Token auth: ${payload.email}`)
+        log.info(`Token auth: ${payload.email} (userId=${userId})`)
       } else {
         send(ws, { type: 'auth_result', data: { success: false, error: 'Invalid or expired token' } } as WsMessage)
       }
@@ -299,23 +307,28 @@ function handleSaveAgentConfig(ws: WebSocket, cfg: Record<string, unknown>): voi
   const auth = clientAuth.get(ws)
   if (!auth) return
 
-  const provider = String(cfg.provider ?? 'none')
-  const model = String(cfg.model ?? 'claude-sonnet-4-20250514')
-  const maxBudget = Number(cfg.maxBudgetUsd ?? 0.5)
-  const externalUrl = cfg.externalUrl ? String(cfg.externalUrl) : null
+  try {
+    const provider = String(cfg.provider ?? 'none')
+    const model = String(cfg.model ?? 'claude-sonnet-4-20250514')
+    const maxBudget = Number(cfg.maxBudgetUsd ?? 0.5)
+    const externalUrl = cfg.externalUrl ? String(cfg.externalUrl) : null
 
-  let encryptedKey: string | null | undefined
-  if (cfg.apiKey && typeof cfg.apiKey === 'string' && cfg.apiKey.length > 0) {
-    encryptedKey = encrypt(cfg.apiKey)
-    log.info(`Agent config saved for ${auth.email} (provider: ${provider}, new API key set)`)
-  } else {
-    encryptedKey = undefined
-    log.info(`Agent config saved for ${auth.email} (provider: ${provider}, key unchanged)`)
+    let encryptedKey: string | null | undefined
+    if (cfg.apiKey && typeof cfg.apiKey === 'string' && cfg.apiKey.length > 0) {
+      encryptedKey = encrypt(cfg.apiKey)
+    } else {
+      encryptedKey = undefined
+    }
+
+    const row = upsertAgentConfig(auth.userId, provider, encryptedKey, model, maxBudget, externalUrl)
+    const keyStatus = encryptedKey !== undefined ? 'new API key set' : 'key unchanged'
+    log.info(`Agent config saved for ${auth.email} (provider: ${provider}, ${keyStatus}, row user_id=${row.user_id})`)
+
+    handleRequestAgentConfig(ws)
+  } catch (err) {
+    log.error(`Failed to save agent config for ${auth.email}: ${(err as Error).message}`)
+    send(ws, { type: 'agent_config_error', data: { error: 'Failed to save configuration' } } as unknown as WsMessage)
   }
-
-  upsertAgentConfig(auth.userId, provider, encryptedKey, model, maxBudget, externalUrl)
-
-  handleRequestAgentConfig(ws)
 }
 
 function handleRequestAgentConfig(ws: WebSocket): void {

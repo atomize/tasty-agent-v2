@@ -206,6 +206,9 @@ export function useMonitorSocket(): MonitorState {
           case 'agent_config':
             setAgentConfig(msg.data)
             break
+          case 'agent_config_error':
+            console.error('[agent_config_error]', msg.data?.error)
+            break
         }
       } catch {
         // ignore malformed messages
