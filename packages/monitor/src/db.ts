@@ -27,11 +27,17 @@ export function getDb(): Database.Database {
 function migrate(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      email      TEXT    NOT NULL UNIQUE COLLATE NOCASE,
-      password_hash TEXT NOT NULL,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      email          TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash  TEXT,
+      oauth_provider TEXT,
+      oauth_id       TEXT,
+      created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth
+      ON users(oauth_provider, oauth_id)
+      WHERE oauth_provider IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS agent_configs (
       user_id           INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -43,12 +49,26 @@ function migrate(db: Database.Database): void {
       updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `)
+
+  migrateUsersTableOAuth(db)
+}
+
+function migrateUsersTableOAuth(db: Database.Database): void {
+  const cols = db.pragma('table_info(users)') as { name: string }[]
+  const colNames = new Set(cols.map(c => c.name))
+  if (!colNames.has('oauth_provider')) {
+    db.exec('ALTER TABLE users ADD COLUMN oauth_provider TEXT')
+    db.exec('ALTER TABLE users ADD COLUMN oauth_id TEXT')
+    log.info('Migrated users table: added oauth_provider, oauth_id columns')
+  }
 }
 
 export interface UserRow {
   id: number
   email: string
-  password_hash: string
+  password_hash: string | null
+  oauth_provider: string | null
+  oauth_id: string | null
   created_at: string
 }
 
@@ -65,6 +85,26 @@ export interface AgentConfigRow {
 export function createUser(email: string, passwordHash: string): UserRow {
   const stmt = getDb().prepare('INSERT INTO users (email, password_hash) VALUES (?, ?) RETURNING *')
   return stmt.get(email, passwordHash) as UserRow
+}
+
+export function findOrCreateOAuthUser(provider: string, oauthId: string, email: string): UserRow {
+  const byOAuth = getDb().prepare(
+    'SELECT * FROM users WHERE oauth_provider = ? AND oauth_id = ?'
+  ).get(provider, oauthId) as UserRow | undefined
+  if (byOAuth) return byOAuth
+
+  const byEmail = findUserByEmail(email)
+  if (byEmail) {
+    getDb().prepare(
+      'UPDATE users SET oauth_provider = ?, oauth_id = ? WHERE id = ?'
+    ).run(provider, oauthId, byEmail.id)
+    return { ...byEmail, oauth_provider: provider, oauth_id: oauthId }
+  }
+
+  const stmt = getDb().prepare(
+    'INSERT INTO users (email, oauth_provider, oauth_id) VALUES (?, ?, ?) RETURNING *'
+  )
+  return stmt.get(email, provider, oauthId) as UserRow
 }
 
 export function findUserByEmail(email: string): UserRow | undefined {

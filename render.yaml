@@ -13,6 +13,16 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: PUBLIC_URL
+        value: "https://tasty-v2-monitor.onrender.com"
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITLAB_CLIENT_ID
+        sync: false
+      - key: GITLAB_CLIENT_SECRET
+        sync: false
       - fromGroup: tasty-v2-secrets
     healthCheckPath: /
 

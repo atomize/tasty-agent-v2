@@ -15,6 +15,7 @@ import { isEncryptionEnabled, encrypt, maskApiKey } from './crypto.js'
 import { login, register, verifyToken } from './auth.js'
 import { getAgentConfig, upsertAgentConfig } from './db.js'
 import type { JwtPayload } from './auth.js'
+import { handleOAuthRoute, getEnabledOAuthProviders } from './oauth.js'
 
 let wss: WebSocketServer | null = null
 const startTime = Date.now()
@@ -114,7 +115,8 @@ export function startBroadcaster(): void {
     log.warn('SERVE_DASHBOARD=true but no dashboard build found — WS-only mode')
   }
 
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
+    if (await handleOAuthRoute(req, res)) return
     if (dashDir) {
       serveStatic(req, res, dashDir)
     } else {
@@ -215,6 +217,7 @@ function buildStatus() {
     env: config.tastytrade.env,
     isDelayed: config.tastytrade.env === 'sandbox',
     multiTenant: isMultiTenant(),
+    oauthProviders: getEnabledOAuthProviders(),
   }
 }
 

@@ -28,6 +28,11 @@ export async function login(email: string, password: string): Promise<{ token: s
   const user = findUserByEmail(email)
   if (!user) throw new Error('Invalid email or password')
 
+  if (!user.password_hash) {
+    const provider = user.oauth_provider ?? 'OAuth'
+    throw new Error(`This account uses ${provider} sign-in. Use the ${provider} button instead.`)
+  }
+
   const valid = await bcrypt.compare(password, user.password_hash)
   if (!valid) throw new Error('Invalid email or password')
 
@@ -52,4 +57,8 @@ export function getUserFromToken(token: string): UserRow | null {
 function signToken(user: UserRow): string {
   const payload: JwtPayload = { userId: user.id, email: user.email }
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN })
+}
+
+export function signTokenForOAuth(user: UserRow): string {
+  return signToken(user)
 }

@@ -14,6 +14,7 @@
     "@tastytrade-monitor/claude-agent": "workspace:*",
     "@tastytrade-monitor/shared": "workspace:*",
     "@tastytrade/api": "^7.0.1",
+    "arctic": "^3.7.0",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.8.0",
     "date-fns": "^4.1.0",

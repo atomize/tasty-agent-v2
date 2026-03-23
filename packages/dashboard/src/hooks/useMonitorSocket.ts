@@ -16,6 +16,7 @@ export interface MonitorState {
   env: 'sandbox' | 'production'
   isDelayed: boolean
   multiTenant: boolean
+  oauthProviders: string[]
   optionChain: OptionChainResponse | null
   agentStatus: AgentStatus | null
   agentConfig: AgentConfigResponse | null
@@ -58,6 +59,7 @@ export function useMonitorSocket(): MonitorState {
   const [env, setEnv] = useState<'sandbox' | 'production'>('sandbox')
   const [isDelayed, setIsDelayed] = useState(true)
   const [multiTenant, setMultiTenant] = useState(false)
+  const [oauthProviders, setOauthProviders] = useState<string[]>([])
   const [optionChain, setOptionChain] = useState<OptionChainResponse | null>(null)
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null)
   const [agentConfig, setAgentConfig] = useState<AgentConfigResponse | null>(null)
@@ -152,6 +154,7 @@ export function useMonitorSocket(): MonitorState {
             if (msg.data.env) setEnv(msg.data.env)
             if (msg.data.isDelayed != null) setIsDelayed(msg.data.isDelayed)
             if (msg.data.multiTenant != null) setMultiTenant(msg.data.multiTenant)
+            if (msg.data.oauthProviders) setOauthProviders(msg.data.oauthProviders)
             break
           case 'optionChain':
             setOptionChain(msg.data)
@@ -190,14 +193,31 @@ export function useMonitorSocket(): MonitorState {
 
   useEffect(() => {
     connect()
+
+    function handleOAuthMessage(event: MessageEvent) {
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+        if (data.type === 'oauth_callback' && data.token) {
+          localStorage.setItem(TOKEN_KEY, data.token)
+          setAuthUser(data.user)
+          setAuthError(null)
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'auth_token', token: data.token }))
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('message', handleOAuthMessage)
+
     return () => {
       clearTimeout(reconnectTimer.current)
       wsRef.current?.close()
+      window.removeEventListener('message', handleOAuthMessage)
     }
   }, [connect])
 
   return {
-    connected, snapshots, alerts, analyses, account, uptime, env, isDelayed, multiTenant,
+    connected, snapshots, alerts, analyses, account, uptime, env, isDelayed, multiTenant, oauthProviders,
     optionChain, agentStatus, agentConfig, authUser, authError,
     requestChain, sendRaw, login: loginFn, register: registerFn, logout,
     saveAgentConfig, requestAgentConfig,

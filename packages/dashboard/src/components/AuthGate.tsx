@@ -2,11 +2,24 @@ import { useState } from 'react'
 
 interface AuthGateProps {
   error: string | null
+  oauthProviders: string[]
   onLogin: (email: string, password: string) => void
   onRegister: (email: string, password: string) => void
 }
 
-export function AuthGate({ error, onLogin, onRegister }: AuthGateProps) {
+function openOAuthPopup(provider: string) {
+  const w = 500, h = 600
+  const left = window.screenX + (window.outerWidth - w) / 2
+  const top = window.screenY + (window.outerHeight - h) / 2
+  window.open(`/auth/${provider}`, `oauth-${provider}`, `width=${w},height=${h},left=${left},top=${top}`)
+}
+
+const PROVIDER_LABELS: Record<string, { label: string; bg: string; hover: string }> = {
+  github: { label: 'GitHub', bg: 'bg-[#24292f]', hover: 'hover:bg-[#32383f]' },
+  gitlab: { label: 'GitLab', bg: 'bg-[#6b4fbb]', hover: 'hover:bg-[#7c5fd0]' },
+}
+
+export function AuthGate({ error, oauthProviders, onLogin, onRegister }: AuthGateProps) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -118,6 +131,32 @@ export function AuthGate({ error, onLogin, onRegister }: AuthGateProps) {
           >
             {mode === 'login' ? 'Sign In' : 'Create Account'}
           </button>
+
+          {oauthProviders.length > 0 && (
+            <>
+              <div className="flex items-center gap-3 py-1">
+                <div className="flex-1 border-t border-gray-700" />
+                <span className="text-[10px] text-gray-600 uppercase tracking-widest">or</span>
+                <div className="flex-1 border-t border-gray-700" />
+              </div>
+
+              <div className="space-y-2">
+                {oauthProviders.map(p => {
+                  const cfg = PROVIDER_LABELS[p] ?? { label: p, bg: 'bg-gray-700', hover: 'hover:bg-gray-600' }
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => openOAuthPopup(p)}
+                      className={`w-full py-2 ${cfg.bg} ${cfg.hover} text-white text-sm font-medium rounded transition-colors flex items-center justify-center gap-2`}
+                    >
+                      Sign in with {cfg.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
         </form>
       </div>
     </div>

@@ -44,14 +44,14 @@ export function App() {
   const state = useMonitorSocket()
   const {
     connected, snapshots, alerts, analyses, account, uptime, env, isDelayed,
-    multiTenant, optionChain, agentStatus, agentConfig, authUser, authError,
+    multiTenant, oauthProviders, optionChain, agentStatus, agentConfig, authUser, authError,
     requestChain, sendRaw, login, register, logout,
     saveAgentConfig, requestAgentConfig,
   } = state
   const [activeTab, setActiveTab] = useState<Tab>('watchlist')
 
   if (multiTenant && !authUser) {
-    return <AuthGate error={authError} onLogin={login} onRegister={register} />
+    return <AuthGate error={authError} oauthProviders={oauthProviders} onLogin={login} onRegister={register} />
   }
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
