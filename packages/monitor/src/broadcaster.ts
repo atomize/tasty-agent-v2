@@ -11,6 +11,10 @@ import { fetchOptionChain } from './chainFetcher.js'
 import { getEntryByTicker } from './watchlist.config.js'
 import { config } from './config.js'
 import { log } from './logger.js'
+import { isEncryptionEnabled, encrypt, maskApiKey } from './crypto.js'
+import { login, register, verifyToken } from './auth.js'
+import { getAgentConfig, upsertAgentConfig } from './db.js'
+import type { JwtPayload } from './auth.js'
 
 let wss: WebSocketServer | null = null
 const startTime = Date.now()
@@ -23,6 +27,20 @@ let agentStatus: AgentStatus | null = null
 
 type OrchestratorHandler = (alert: OptionsAlert) => Promise<void> | void
 let orchestratorHandler: OrchestratorHandler | null = null
+
+interface ClientAuth {
+  userId: number
+  email: string
+}
+const clientAuth = new WeakMap<WebSocket, ClientAuth>()
+
+function isMultiTenant(): boolean {
+  return isEncryptionEnabled()
+}
+
+function isAuthenticated(ws: WebSocket): boolean {
+  return !isMultiTenant() || clientAuth.has(ws)
+}
 
 export function onAlertForOrchestrator(handler: OrchestratorHandler): void {
   orchestratorHandler = handler
@@ -110,25 +128,29 @@ export function startBroadcaster(): void {
   wss.on('connection', (ws) => {
     log.info(`Dashboard client connected (total: ${wss!.clients.size})`)
 
-    send(ws, { type: 'snapshot', data: getAllSnapshots() })
-    send(ws, { type: 'account', data: getAccountContext() })
     send(ws, { type: 'status', data: buildStatus() })
 
-    if (recentAlerts.length > 0) {
-      send(ws, { type: 'alert_history', data: recentAlerts })
-    }
-    if (recentAnalyses.length > 0) {
-      send(ws, { type: 'analysis_history', data: recentAnalyses })
-    }
-    if (agentStatus) {
-      send(ws, { type: 'agent_status', data: agentStatus })
+    if (!isMultiTenant()) {
+      sendFullState(ws)
     }
 
     ws.on('message', (raw) => {
       try {
         const msg = JSON.parse(String(raw))
+
+        if (msg.type === 'auth' || msg.type === 'auth_token') {
+          handleAuth(ws, msg)
+          return
+        }
+
+        if (!isAuthenticated(ws)) return
+
         if (msg.type === 'requestChain' && typeof msg.ticker === 'string') {
           handleChainRequest(ws, msg.ticker)
+        } else if (msg.type === 'save_agent_config' && msg.config) {
+          handleSaveAgentConfig(ws, msg.config)
+        } else if (msg.type === 'request_agent_config') {
+          handleRequestAgentConfig(ws)
         } else if (msg.type === 'agent_analysis' && msg.data) {
           log.info(`Agent analysis received for ${msg.data.ticker ?? 'unknown'} (model: ${msg.data.model ?? 'unknown'})`)
           pushAnalysis(msg.data as AgentAnalysis)
@@ -192,6 +214,7 @@ function buildStatus() {
     uptime: Date.now() - startTime,
     env: config.tastytrade.env,
     isDelayed: config.tastytrade.env === 'sandbox',
+    multiTenant: isMultiTenant(),
   }
 }
 
@@ -199,7 +222,7 @@ function broadcast(msg: WsMessage): void {
   if (!wss) return
   const payload = JSON.stringify(msg)
   for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState === WebSocket.OPEN && isAuthenticated(client)) {
       client.send(payload)
     }
   }
@@ -208,7 +231,7 @@ function broadcast(msg: WsMessage): void {
 function broadcastRaw(payload: string): void {
   if (!wss) return
   for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState === WebSocket.OPEN && isAuthenticated(client)) {
       client.send(payload)
     }
   }
@@ -217,6 +240,86 @@ function broadcastRaw(payload: string): void {
 function send(ws: WebSocket, msg: WsMessage): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg))
+  }
+}
+
+function sendFullState(ws: WebSocket): void {
+  send(ws, { type: 'snapshot', data: getAllSnapshots() })
+  send(ws, { type: 'account', data: getAccountContext() })
+  if (recentAlerts.length > 0) send(ws, { type: 'alert_history', data: recentAlerts })
+  if (recentAnalyses.length > 0) send(ws, { type: 'analysis_history', data: recentAnalyses })
+  if (agentStatus) send(ws, { type: 'agent_status', data: agentStatus })
+}
+
+async function handleAuth(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {
+  if (!isMultiTenant()) return
+
+  try {
+    if (msg.type === 'auth_token' && typeof msg.token === 'string') {
+      const payload = verifyToken(msg.token) as JwtPayload | null
+      if (payload) {
+        clientAuth.set(ws, { userId: payload.userId, email: payload.email })
+        send(ws, { type: 'auth_result', data: { success: true, user: { id: payload.userId, email: payload.email } } } as WsMessage)
+        sendFullState(ws)
+        log.info(`Token auth: ${payload.email}`)
+      } else {
+        send(ws, { type: 'auth_result', data: { success: false, error: 'Invalid or expired token' } } as WsMessage)
+      }
+      return
+    }
+
+    if (msg.type === 'auth' && typeof msg.email === 'string' && typeof msg.password === 'string') {
+      const action = msg.action as string
+      const result = action === 'register'
+        ? await register(msg.email, msg.password)
+        : await login(msg.email, msg.password)
+
+      clientAuth.set(ws, { userId: result.user.id, email: result.user.email })
+      send(ws, { type: 'auth_result', data: { success: true, token: result.token, user: result.user } } as WsMessage)
+      sendFullState(ws)
+      log.info(`${action === 'register' ? 'Registered' : 'Logged in'}: ${result.user.email}`)
+      return
+    }
+  } catch (err) {
+    const message = (err as Error).message ?? 'Authentication failed'
+    send(ws, { type: 'auth_result', data: { success: false, error: message } } as WsMessage)
+  }
+}
+
+function handleSaveAgentConfig(ws: WebSocket, cfg: Record<string, unknown>): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+
+  const provider = String(cfg.provider ?? 'none')
+  const model = String(cfg.model ?? 'claude-sonnet-4-20250514')
+  const maxBudget = Number(cfg.maxBudgetUsd ?? 0.5)
+  const externalUrl = cfg.externalUrl ? String(cfg.externalUrl) : null
+  const encryptedKey = cfg.apiKey ? encrypt(String(cfg.apiKey)) : null
+
+  upsertAgentConfig(auth.userId, provider, encryptedKey, model, maxBudget, externalUrl)
+  log.info(`Agent config saved for ${auth.email} (provider: ${provider})`)
+
+  handleRequestAgentConfig(ws)
+}
+
+function handleRequestAgentConfig(ws: WebSocket): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+
+  const row = getAgentConfig(auth.userId)
+  if (row) {
+    send(ws, {
+      type: 'agent_config',
+      data: {
+        provider: row.provider,
+        maskedApiKey: row.encrypted_api_key ? maskApiKey('****configured****') : null,
+        model: row.model,
+        maxBudgetUsd: row.max_budget_usd,
+        externalUrl: row.external_url,
+      },
+    } as WsMessage)
+  } else {
+    send(ws, { type: 'agent_config', data: { provider: 'none', maskedApiKey: null, model: 'claude-sonnet-4-20250514', maxBudgetUsd: 0.5, externalUrl: null } } as WsMessage)
   }
 }
 
