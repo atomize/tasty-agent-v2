@@ -10,6 +10,9 @@ import { OptionChainPanel } from './components/OptionChainPanel.js'
 import { AnalysisPanel } from './components/AnalysisPanel.js'
 import { AuthGate } from './components/AuthGate.js'
 import { AgentSettings } from './components/AgentSettings.js'
+import { WatchlistBuilder } from './components/WatchlistBuilder.js'
+import { ReportsPanel } from './components/ReportsPanel.js'
+import { ChatPanel, ChatToggleButton } from './components/ChatPanel.js'
 
 function AgentStatusIndicator({ status }: { status: AgentStatus | null }) {
   if (!status) {
@@ -38,28 +41,38 @@ function AgentStatusIndicator({ status }: { status: AgentStatus | null }) {
   )
 }
 
-type Tab = 'watchlist' | 'options' | 'alerts' | 'positions' | 'analysis' | 'agent' | 'settings'
+type Tab = 'watchlist' | 'watchlist_builder' | 'options' | 'alerts' | 'positions' | 'analysis' | 'reports' | 'agent' | 'settings'
 
 export function App() {
   const state = useMonitorSocket()
   const {
     connected, snapshots, alerts, analyses, account, uptime, env, isDelayed,
     multiTenant, oauthProviders, optionChain, agentStatus, agentConfig, authUser, authError,
+    watchlists, chatMessages, scheduleConfig, budgetStatus, reports, searchResults,
     requestChain, sendRaw, login, register, logout,
     saveAgentConfig, requestAgentConfig, sendTestAlert,
+    requestWatchlist, saveWatchlist, deleteWatchlistItem, syncTastytradeWatchlists,
+    searchSymbols, sendChatMessage, clearChat,
+    saveScheduleConfig, requestScheduleConfig, requestBudgetStatus,
+    requestReports, runAnalysisNow,
   } = state
   const [activeTab, setActiveTab] = useState<Tab>('watchlist')
+  const [chatOpen, setChatOpen] = useState(false)
 
   if (multiTenant && !authUser) {
     return <AuthGate error={authError} oauthProviders={oauthProviders} onLogin={login} onRegister={register} />
   }
 
+  const wlItemCount = watchlists.reduce((sum, wl) => sum + wl.items.length, 0) || undefined
+
   const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: 'watchlist', label: 'Watchlist', count: snapshots.length },
+    { id: 'watchlist', label: 'Market Data', count: snapshots.length },
+    ...(multiTenant ? [{ id: 'watchlist_builder' as Tab, label: 'Watchlist', count: wlItemCount }] : []),
     { id: 'options', label: 'Options' },
     { id: 'alerts', label: 'Alerts', count: alerts.length },
     { id: 'positions', label: 'Positions', count: account.openPositions.length },
     { id: 'analysis', label: 'AI Analysis', count: analyses.length || undefined },
+    ...(multiTenant ? [{ id: 'reports' as Tab, label: 'Reports', count: reports.length || undefined }] : []),
     { id: 'agent', label: 'Agent Export' },
     ...(multiTenant ? [{ id: 'settings' as Tab, label: 'Settings' }] : []),
   ]
@@ -129,10 +142,30 @@ export function App() {
       {/* Content */}
       <main className="flex-1 overflow-auto p-4">
         {activeTab === 'watchlist' && <WatchlistTable snapshots={snapshots} alerts={alerts} />}
+        {activeTab === 'watchlist_builder' && (
+          <WatchlistBuilder
+            watchlists={watchlists}
+            searchResults={searchResults}
+            onRequestWatchlist={requestWatchlist}
+            onSave={saveWatchlist}
+            onDelete={deleteWatchlistItem}
+            onSync={syncTastytradeWatchlists}
+            onSearch={searchSymbols}
+          />
+        )}
         {activeTab === 'options' && <OptionChainPanel snapshots={snapshots} optionChain={optionChain} requestChain={requestChain} env={env} />}
         {activeTab === 'alerts' && <AlertFeed alerts={alerts} />}
         {activeTab === 'positions' && <PositionsPanel account={account} env={env} />}
         {activeTab === 'analysis' && <AnalysisPanel analyses={analyses} agentStatus={agentStatus} />}
+        {activeTab === 'reports' && (
+          <ReportsPanel
+            reports={reports}
+            budgetStatus={budgetStatus}
+            onRequestReports={requestReports}
+            onRunNow={runAnalysisNow}
+            onRequestBudget={requestBudgetStatus}
+          />
+        )}
         {activeTab === 'agent' && <AgentExportPanel alerts={alerts} env={env} sendRaw={sendRaw} />}
         {activeTab === 'settings' && (
           <AgentSettings
@@ -140,9 +173,33 @@ export function App() {
             onSave={saveAgentConfig}
             onRequest={requestAgentConfig}
             onTestAlert={sendTestAlert}
+            scheduleConfig={scheduleConfig}
+            budgetStatus={budgetStatus}
+            onSaveSchedule={saveScheduleConfig}
+            onRequestSchedule={requestScheduleConfig}
+            onRequestBudget={requestBudgetStatus}
           />
         )}
       </main>
+
+      {/* Floating Chat */}
+      {multiTenant && authUser && (
+        <>
+          {chatOpen ? (
+            <ChatPanel
+              messages={chatMessages}
+              onSend={sendChatMessage}
+              onClear={clearChat}
+              isOpen={chatOpen}
+              onClose={() => setChatOpen(false)}
+              watchlistCount={wlItemCount ?? 0}
+              alertCount={alerts.length}
+            />
+          ) : (
+            <ChatToggleButton onClick={() => setChatOpen(true)} messageCount={chatMessages.length} />
+          )}
+        </>
+      )}
     </div>
   )
 }

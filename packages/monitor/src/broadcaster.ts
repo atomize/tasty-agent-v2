@@ -1,9 +1,9 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http'
 import { readFileSync, existsSync, statSync } from 'node:fs'
-import { resolve, extname, join } from 'node:path'
+import { resolve, extname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, WebSocket } from 'ws'
-import type { OptionsAlert, AgentAnalysis, AgentStatus, WsMessage } from '@tastytrade-monitor/shared'
+import type { OptionsAlert, AgentAnalysis, AgentStatus, WsMessage, AnalysisReport } from '@tastytrade-monitor/shared'
 import { getAllSnapshots } from './state.js'
 import { getAccountContext } from './account.js'
 import { onAlert } from './alertBus.js'
@@ -13,9 +13,13 @@ import { config } from './config.js'
 import { log } from './logger.js'
 import { isEncryptionEnabled, encrypt, maskApiKey } from './crypto.js'
 import { login, register, verifyToken } from './auth.js'
-import { getAgentConfig, upsertAgentConfig, findUserById } from './db.js'
+import { getAgentConfig, upsertAgentConfig, findUserById, upsertScheduleConfig, getScheduleConfig, getReportsForDate } from './db.js'
 import type { JwtPayload } from './auth.js'
 import { handleOAuthRoute, getEnabledOAuthProviders } from './oauth.js'
+import { getUserWatchlistsWithItems, saveWatchlist, removeWatchlistItem, syncFromTastytrade, searchSymbols } from './watchlistService.js'
+import { getBudgetStatus } from './budgetTracker.js'
+import { handleChatMessage, clearChatHistory } from './chatHandler.js'
+import { runScheduledAnalysis } from './scheduledAnalysis.js'
 
 let wss: WebSocketServer | null = null
 const startTime = Date.now()
@@ -47,7 +51,7 @@ export function onAlertForOrchestrator(handler: OrchestratorHandler): void {
   orchestratorHandler = handler
 }
 
-export function broadcastToAll(msg: WsMessage): void {
+export function broadcastToAll(msg: WsMessage | Record<string, unknown>): void {
   broadcast(msg)
 }
 
@@ -86,13 +90,24 @@ function resolveDashboardDir(): string | null {
   return null
 }
 
+function resolvedFileUnderDashboardRoot(dashDir: string, urlPath: string): string {
+  const root = resolve(dashDir)
+  const relativePath = urlPath === '/' ? 'index.html' : urlPath.replace(/^[/\\]+/, '')
+  const candidate = resolve(root, relativePath)
+  const prefix = root.endsWith(sep) ? root : root + sep
+  if (candidate !== root && !candidate.startsWith(prefix)) {
+    return join(root, 'index.html')
+  }
+  return candidate
+}
+
 function serveStatic(req: IncomingMessage, res: ServerResponse, dashDir: string): void {
   const url = req.url ?? '/'
   const safePath = url.split('?')[0].replace(/\.\./g, '')
-  let filePath = join(dashDir, safePath === '/' ? 'index.html' : safePath)
+  let filePath = resolvedFileUnderDashboardRoot(dashDir, safePath === '' ? '/' : safePath)
 
   if (!existsSync(filePath) || !statSync(filePath).isFile()) {
-    filePath = join(dashDir, 'index.html')
+    filePath = join(resolve(dashDir), 'index.html')
   }
 
   const ext = extname(filePath)
@@ -138,39 +153,17 @@ export function startBroadcaster(): void {
 
     ws.on('message', (raw) => {
       try {
-        const msg = JSON.parse(String(raw))
+        const msg = JSON.parse(String(raw)) as Record<string, unknown>
+        const type = msg.type
 
-        if (msg.type === 'auth' || msg.type === 'auth_token') {
-          handleAuth(ws, msg)
+        if (type === 'auth' || type === 'auth_token') {
+          void handleAuth(ws, msg)
           return
         }
 
         if (!isAuthenticated(ws)) return
 
-        if (msg.type === 'requestChain' && typeof msg.ticker === 'string') {
-          handleChainRequest(ws, msg.ticker)
-        } else if (msg.type === 'save_agent_config' && msg.config) {
-          handleSaveAgentConfig(ws, msg.config)
-        } else if (msg.type === 'request_agent_config') {
-          handleRequestAgentConfig(ws)
-        } else if (msg.type === 'agent_analysis' && msg.data) {
-          log.info(`Agent analysis received for ${msg.data.ticker ?? 'unknown'} (model: ${msg.data.model ?? 'unknown'})`)
-          pushAnalysis(msg.data as AgentAnalysis)
-          broadcastRaw(String(raw))
-        } else if (msg.type === 'alert' && msg.data) {
-          const alert = msg.data as OptionsAlert
-          log.info(`Injected test alert for ${alert.trigger?.ticker ?? 'unknown'}`)
-          pushAlert(alert)
-          broadcast({ type: 'alert', data: alert })
-          if (orchestratorHandler) {
-            Promise.resolve(orchestratorHandler(alert)).catch(err => {
-              log.error('Orchestrator dispatch error:', err)
-            })
-          }
-        } else if (msg.type === 'agent_status' && msg.data) {
-          agentStatus = msg.data as AgentStatus
-          broadcastRaw(String(raw))
-        }
+        routeAuthenticatedWsMessage(ws, msg, String(raw))
       } catch (err) {
         log.warn(`WS message error: ${(err as Error).message}`)
       }
@@ -227,7 +220,7 @@ function buildStatus() {
   }
 }
 
-function broadcast(msg: WsMessage): void {
+function broadcast(msg: WsMessage | Record<string, unknown>): void {
   if (!wss) return
   const payload = JSON.stringify(msg)
   for (const client of wss.clients) {
@@ -246,7 +239,7 @@ function broadcastRaw(payload: string): void {
   }
 }
 
-function send(ws: WebSocket, msg: WsMessage): void {
+function send(ws: WebSocket, msg: WsMessage | Record<string, unknown>): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg))
   }
@@ -352,6 +345,169 @@ function handleRequestAgentConfig(ws: WebSocket): void {
   }
 }
 
+// ─── Watchlist handlers ─────────────────────────────────────────
+
+function handleRequestWatchlist(ws: WebSocket): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  const data = getUserWatchlistsWithItems(auth.userId)
+  send(ws, { type: 'watchlist_data', data } as WsMessage)
+}
+
+function handleSaveWatchlist(ws: WebSocket, data: Record<string, unknown>): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  try {
+    const name = String(data.name ?? 'Default')
+    const items = (data.items ?? []) as Array<Record<string, unknown>>
+    saveWatchlist(auth.userId, name, items.map((item, idx) => ({
+      ticker: String(item.ticker ?? ''),
+      layer: item.layer != null ? String(item.layer) : null,
+      strategies: Array.isArray(item.strategies) ? item.strategies.map(String) : [],
+      thesis: String(item.thesis ?? ''),
+      instrumentType: (String(item.instrumentType ?? 'equity')) as 'equity' | 'crypto',
+      sortOrder: typeof item.sortOrder === 'number' ? item.sortOrder : idx,
+    })))
+    handleRequestWatchlist(ws)
+    log.info(`Watchlist saved for ${auth.email}`)
+  } catch (err) {
+    log.error(`Failed to save watchlist: ${(err as Error).message}`)
+  }
+}
+
+function handleDeleteWatchlistItem(ws: WebSocket, data: Record<string, unknown>): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  removeWatchlistItem(auth.userId, String(data.watchlistName ?? 'Default'), String(data.ticker ?? ''))
+  handleRequestWatchlist(ws)
+}
+
+async function handleSyncTastytradeWatchlists(ws: WebSocket): Promise<void> {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  const data = await syncFromTastytrade(auth.userId)
+  send(ws, { type: 'watchlist_data', data } as WsMessage)
+}
+
+async function handleSearchSymbols(ws: WebSocket, query: string): Promise<void> {
+  const results = await searchSymbols(query)
+  send(ws, { type: 'search_results', data: results } as WsMessage)
+}
+
+// ─── Chat handlers ──────────────────────────────────────────────
+
+async function handleChatSend(ws: WebSocket, message: string): Promise<void> {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+
+  send(ws, {
+    type: 'chat_message',
+    data: { id: `user-${Date.now()}`, role: 'user', content: message, timestamp: new Date().toISOString() },
+  } as WsMessage)
+
+  const response = await handleChatMessage(auth.userId, message)
+  if (response) {
+    send(ws, { type: 'chat_message', data: response } as WsMessage)
+  }
+}
+
+function handleChatClear(ws: WebSocket): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  clearChatHistory(auth.userId)
+  send(ws, { type: 'chat_history', data: [] } as WsMessage)
+}
+
+// ─── Schedule / Budget / Report handlers ─────────────────────────
+
+function handleSaveScheduleConfig(ws: WebSocket, data: Record<string, unknown>): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  try {
+    upsertScheduleConfig(auth.userId, {
+      runs_per_day: typeof data.runsPerDay === 'number' ? data.runsPerDay : undefined,
+      run_times_ct: Array.isArray(data.runTimesCt) ? JSON.stringify(data.runTimesCt) : undefined,
+      daily_budget_usd: typeof data.dailyBudgetUsd === 'number' ? data.dailyBudgetUsd : undefined,
+      per_run_budget_usd: typeof data.perRunBudgetUsd === 'number' ? data.perRunBudgetUsd : undefined,
+      include_chains: typeof data.includeChains === 'boolean' ? (data.includeChains ? 1 : 0) : undefined,
+      max_tickers_per_run: typeof data.maxTickersPerRun === 'number' ? data.maxTickersPerRun : undefined,
+      enabled: typeof data.enabled === 'boolean' ? (data.enabled ? 1 : 0) : undefined,
+    })
+    handleRequestScheduleConfig(ws)
+    handleRequestBudgetStatus(ws)
+    log.info(`Schedule config saved for ${auth.email}`)
+  } catch (err) {
+    log.error(`Failed to save schedule config: ${(err as Error).message}`)
+  }
+}
+
+function handleRequestScheduleConfig(ws: WebSocket): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  const row = getScheduleConfig(auth.userId)
+  const runTimes = row ? JSON.parse(row.run_times_ct) : ['09:45', '11:30', '13:30', '15:00']
+  send(ws, {
+    type: 'schedule_config',
+    data: {
+      runsPerDay: row?.runs_per_day ?? 4,
+      runTimesCt: runTimes,
+      dailyBudgetUsd: row?.daily_budget_usd ?? 2.0,
+      perRunBudgetUsd: row?.per_run_budget_usd ?? 0.5,
+      includeChains: (row?.include_chains ?? 1) === 1,
+      maxTickersPerRun: row?.max_tickers_per_run ?? 10,
+      enabled: (row?.enabled ?? 1) === 1,
+      updatedAt: row?.updated_at,
+    },
+  } as WsMessage)
+}
+
+function handleRequestBudgetStatus(ws: WebSocket): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  send(ws, { type: 'budget_status', data: getBudgetStatus(auth.userId) } as WsMessage)
+}
+
+function handleRequestReports(ws: WebSocket, data?: Record<string, unknown>): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  const date = typeof data?.date === 'string' ? data.date : undefined
+  const rows = getReportsForDate(auth.userId, date)
+  const reports = rows.map(r => ({
+    id: r.id,
+    runTime: r.run_time,
+    runType: r.run_type,
+    tickers: JSON.parse(r.tickers),
+    report: r.report,
+    costUsd: r.cost_usd,
+    model: r.model,
+    createdAt: r.created_at,
+  }))
+  send(ws, { type: 'reports_data', data: reports } as WsMessage)
+}
+
+async function handleRunAnalysisNow(ws: WebSocket): Promise<void> {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+
+  const agentCfg = getAgentConfig(auth.userId)
+  if (!agentCfg || agentCfg.provider === 'none') {
+    log.warn(`Manual analysis skipped for ${auth.email}: no agent configured`)
+    return
+  }
+
+  const report = await runScheduledAnalysis(auth.userId, agentCfg, 'manual')
+  if (report) {
+    send(ws, { type: 'new_report', data: report } as WsMessage)
+    handleRequestBudgetStatus(ws)
+  }
+}
+
+export function broadcastNewReport(report: AnalysisReport): void {
+  broadcast({ type: 'new_report', data: report } as WsMessage)
+}
+
+// ─── Chain request handler ──────────────────────────────────────
+
 async function handleChainRequest(ws: WebSocket, ticker: string): Promise<void> {
   const entry = getEntryByTicker(ticker)
   const instrumentType = entry?.instrumentType ?? 'equity'
@@ -377,4 +533,134 @@ async function handleChainRequest(ws: WebSocket, ticker: string): Promise<void> 
       data: { ticker, expirations: [], instrumentType: 'equity' },
     })
   }
+}
+
+// ─── Authenticated client message router ─────────────────────────
+
+type WsClientJson = Record<string, unknown>
+
+type AuthenticatedWsRoute = (ws: WebSocket, msg: WsClientJson, raw: string) => void | Promise<void>
+
+function routeAuthenticatedWsMessage(ws: WebSocket, msg: WsClientJson, raw: string): void {
+  const type = msg.type
+  if (typeof type !== 'string') return
+  const handler = authenticatedWsRoutes[type]
+  if (!handler) return
+  void Promise.resolve(handler(ws, msg, raw)).catch(err => {
+    log.warn(`WS handler error [${type}]: ${(err as Error).message}`)
+  })
+}
+
+const authenticatedWsRoutes: Record<string, AuthenticatedWsRoute> = {
+  requestChain(ws, msg) {
+    if (typeof msg.ticker !== 'string') return
+    void handleChainRequest(ws, msg.ticker)
+  },
+
+  save_agent_config(ws, msg) {
+    const cfg = msg.config
+    if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
+      handleSaveAgentConfig(ws, cfg as Record<string, unknown>)
+    }
+  },
+
+  request_agent_config(ws) {
+    handleRequestAgentConfig(ws)
+  },
+
+  agent_analysis(ws, msg, raw) {
+    const data = msg.data
+    if (!data || typeof data !== 'object') return
+    const d = data as Record<string, unknown>
+    log.info(`Agent analysis received for ${d.ticker ?? 'unknown'} (model: ${d.model ?? 'unknown'})`)
+    pushAnalysis(data as unknown as AgentAnalysis)
+    broadcastRaw(raw)
+  },
+
+  alert(ws, msg) {
+    const data = msg.data
+    if (!data || typeof data !== 'object') return
+    const payload = data as unknown as OptionsAlert
+    log.info(`Injected test alert for ${payload.trigger?.ticker ?? 'unknown'}`)
+    pushAlert(payload)
+    broadcast({ type: 'alert', data: payload })
+    if (orchestratorHandler) {
+      Promise.resolve(orchestratorHandler(payload)).catch(err => {
+        log.error('Orchestrator dispatch error:', err)
+      })
+    }
+  },
+
+  agent_status(ws, msg, raw) {
+    const data = msg.data
+    if (!data || typeof data !== 'object') return
+    agentStatus = data as unknown as AgentStatus
+    broadcastRaw(raw)
+  },
+
+  request_watchlist(ws) {
+    handleRequestWatchlist(ws)
+  },
+
+  save_watchlist(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      handleSaveWatchlist(ws, data as Record<string, unknown>)
+    }
+  },
+
+  delete_watchlist_item(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      handleDeleteWatchlistItem(ws, data as Record<string, unknown>)
+    }
+  },
+
+  sync_tastytrade_watchlists(ws) {
+    void handleSyncTastytradeWatchlists(ws)
+  },
+
+  search_symbols(ws, msg) {
+    if (typeof msg.query === 'string') void handleSearchSymbols(ws, msg.query)
+  },
+
+  chat_send(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      const m = (data as Record<string, unknown>).message
+      if (typeof m === 'string') void handleChatSend(ws, m)
+    }
+  },
+
+  chat_clear(ws) {
+    handleChatClear(ws)
+  },
+
+  save_schedule_config(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      handleSaveScheduleConfig(ws, data as Record<string, unknown>)
+    }
+  },
+
+  request_schedule_config(ws) {
+    handleRequestScheduleConfig(ws)
+  },
+
+  request_budget_status(ws) {
+    handleRequestBudgetStatus(ws)
+  },
+
+  request_reports(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      handleRequestReports(ws, data as Record<string, unknown>)
+    } else {
+      handleRequestReports(ws, undefined)
+    }
+  },
+
+  run_analysis_now(ws) {
+    void handleRunAnalysisNow(ws)
+  },
 }
