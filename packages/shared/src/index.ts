@@ -18,6 +18,14 @@ export {
   AgentConfigResponseSchema,
   WsServerAuthResultSchema,
   WsServerAgentConfigSchema,
+  WatchlistItemSchema,
+  WatchlistSchema,
+  ChatMessageSchema,
+  ScheduleConfigSchema,
+  ScheduleConfigResponseSchema,
+  TokenUsageSummarySchema,
+  BudgetStatusSchema,
+  AnalysisReportSchema,
 } from './alert.schema.js'
 
 export type {
@@ -40,4 +48,12 @@ export type {
   AgentConfigResponse,
   WsServerAuthResult,
   WsServerAgentConfig,
+  WatchlistItem,
+  Watchlist,
+  ChatMessage,
+  ScheduleConfig,
+  ScheduleConfigResponse,
+  TokenUsageSummary,
+  BudgetStatus,
+  AnalysisReport,
 } from './alert.schema.js'

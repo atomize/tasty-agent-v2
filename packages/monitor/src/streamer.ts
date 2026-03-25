@@ -15,6 +15,50 @@ const MAX_RECONNECT_DELAY = 60_000
 
 const cryptoStreamerMap = new Map<string, string>()
 
+const symbolRefCount = new Map<string, number>()
+let activeClient: TastytradeClient | null = null
+
+export function addSymbols(tickers: string[]): void {
+  const toSubscribe: string[] = []
+  for (const raw of tickers) {
+    const sym = resolveStreamerSymbol(raw)
+    const count = symbolRefCount.get(sym) ?? 0
+    symbolRefCount.set(sym, count + 1)
+    if (count === 0) toSubscribe.push(sym)
+  }
+  if (toSubscribe.length > 0 && activeClient?.quoteStreamer?.dxLinkFeed) {
+    activeClient.quoteStreamer.subscribe(toSubscribe, [
+      MarketDataSubscriptionType.Quote,
+      MarketDataSubscriptionType.Trade,
+      MarketDataSubscriptionType.Summary,
+      MarketDataSubscriptionType.Profile,
+    ])
+    log.info(`Streamer: subscribed ${toSubscribe.length} new symbols (total: ${symbolRefCount.size})`)
+  }
+}
+
+export function removeSymbols(tickers: string[]): void {
+  const toUnsub: string[] = []
+  for (const raw of tickers) {
+    const sym = resolveStreamerSymbol(raw)
+    const count = symbolRefCount.get(sym) ?? 0
+    if (count <= 1) {
+      symbolRefCount.delete(sym)
+      toUnsub.push(sym)
+    } else {
+      symbolRefCount.set(sym, count - 1)
+    }
+  }
+  if (toUnsub.length > 0 && activeClient?.quoteStreamer) {
+    try { activeClient.quoteStreamer.unsubscribe(toUnsub) } catch { /* may already be disconnected */ }
+    log.info(`Streamer: unsubscribed ${toUnsub.length} symbols (total: ${symbolRefCount.size})`)
+  }
+}
+
+export function getSubscribedSymbolCount(): number {
+  return symbolRefCount.size
+}
+
 async function resolveCryptoStreamerSymbols(client: TastytradeClient): Promise<void> {
   const cryptoTickers = WATCHLIST
     .filter(e => e.instrumentType === 'crypto')
@@ -49,10 +93,12 @@ function resolveStreamerSymbol(ticker: string): string {
 }
 
 export async function startStreamer(client: TastytradeClient): Promise<void> {
+  activeClient = client
   await resolveCryptoStreamerSymbols(client)
   buildReverseMap()
 
   const symbols = getUniqueSymbols().map(resolveStreamerSymbol)
+  for (const sym of symbols) symbolRefCount.set(sym, 1)
   log.info(`Subscribing to ${symbols.length} symbols via DXLink...`)
 
   const streamer = client.quoteStreamer

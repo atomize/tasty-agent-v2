@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { TickerSnapshot, OptionsAlert, AccountContext, OptionChainResponse, AgentAnalysis, AgentStatus, AgentConfigResponse } from '@tastytrade-monitor/shared'
+import type {
+  TickerSnapshot, OptionsAlert, AccountContext, OptionChainResponse,
+  AgentAnalysis, AgentStatus, AgentConfigResponse,
+  Watchlist, ChatMessage, ScheduleConfigResponse, BudgetStatus, AnalysisReport,
+  WatchlistItem, ScheduleConfig,
+} from '@tastytrade-monitor/shared'
 
 export interface AuthUser {
   id: number
@@ -22,6 +27,11 @@ export interface MonitorState {
   agentConfig: AgentConfigResponse | null
   authUser: AuthUser | null
   authError: string | null
+  watchlists: Watchlist[]
+  chatMessages: ChatMessage[]
+  scheduleConfig: ScheduleConfigResponse | null
+  budgetStatus: BudgetStatus | null
+  reports: AnalysisReport[]
   requestChain: (ticker: string) => void
   sendRaw: (msg: unknown) => void
   login: (email: string, password: string) => void
@@ -30,6 +40,19 @@ export interface MonitorState {
   saveAgentConfig: (config: { provider: string; apiKey?: string; model?: string; maxBudgetUsd?: number; externalUrl?: string }) => void
   requestAgentConfig: () => void
   sendTestAlert: (ticker: string) => void
+  requestWatchlist: () => void
+  saveWatchlist: (name: string, items: WatchlistItem[]) => void
+  deleteWatchlistItem: (watchlistName: string, ticker: string) => void
+  syncTastytradeWatchlists: () => void
+  searchSymbols: (query: string) => void
+  sendChatMessage: (message: string) => void
+  clearChat: () => void
+  saveScheduleConfig: (config: Partial<ScheduleConfig>) => void
+  requestScheduleConfig: () => void
+  requestBudgetStatus: () => void
+  requestReports: (date?: string) => void
+  runAnalysisNow: () => void
+  searchResults: { ticker: string; description: string; instrumentType: string }[]
 }
 
 function getWsUrl(): string {
@@ -66,6 +89,12 @@ export function useMonitorSocket(): MonitorState {
   const [agentConfig, setAgentConfig] = useState<AgentConfigResponse | null>(null)
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [watchlists, setWatchlists] = useState<Watchlist[]>([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfigResponse | null>(null)
+  const [budgetStatus, setBudgetStatus] = useState<BudgetStatus | null>(null)
+  const [reports, setReports] = useState<AnalysisReport[]>([])
+  const [searchResults, setSearchResults] = useState<{ ticker: string; description: string; instrumentType: string }[]>([])
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -132,6 +161,79 @@ export function useMonitorSocket(): MonitorState {
           agentContext: `## OPTIONS ALERT — IV_SPIKE on ${ticker}\n**Test alert** fired manually from dashboard.\nPrice ~$120, IV Rank 72, IV 45%.\nATM Apr 120C: $4.50/$4.65, delta 0.50\nATM Apr 120P: $4.40/$4.55, delta -0.50`,
         },
       }))
+    }
+  }, [])
+
+  const requestWatchlist = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'request_watchlist' }))
+    }
+  }, [])
+
+  const saveWatchlist = useCallback((name: string, items: WatchlistItem[]) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'save_watchlist', data: { name, items } }))
+    }
+  }, [])
+
+  const deleteWatchlistItem = useCallback((watchlistName: string, ticker: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'delete_watchlist_item', data: { watchlistName, ticker } }))
+    }
+  }, [])
+
+  const syncTastytradeWatchlists = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'sync_tastytrade_watchlists' }))
+    }
+  }, [])
+
+  const searchSymbolsFn = useCallback((query: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'search_symbols', query }))
+    }
+  }, [])
+
+  const sendChatMessage = useCallback((message: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'chat_send', data: { message } }))
+    }
+  }, [])
+
+  const clearChat = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'chat_clear' }))
+      setChatMessages([])
+    }
+  }, [])
+
+  const saveScheduleConfig = useCallback((cfg: Partial<ScheduleConfig>) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'save_schedule_config', data: cfg }))
+    }
+  }, [])
+
+  const requestScheduleConfig = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'request_schedule_config' }))
+    }
+  }, [])
+
+  const requestBudgetStatus = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'request_budget_status' }))
+    }
+  }, [])
+
+  const requestReports = useCallback((date?: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'request_reports', data: date ? { date } : undefined }))
+    }
+  }, [])
+
+  const runAnalysisNow = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'run_analysis_now' }))
     }
   }, [])
 
@@ -209,6 +311,30 @@ export function useMonitorSocket(): MonitorState {
           case 'agent_config_error':
             console.error('[agent_config_error]', msg.data?.error)
             break
+          case 'watchlist_data':
+            setWatchlists(msg.data)
+            break
+          case 'search_results':
+            setSearchResults(msg.data)
+            break
+          case 'chat_message':
+            setChatMessages(prev => [...prev, msg.data])
+            break
+          case 'chat_history':
+            setChatMessages(msg.data)
+            break
+          case 'schedule_config':
+            setScheduleConfig(msg.data)
+            break
+          case 'budget_status':
+            setBudgetStatus(msg.data)
+            break
+          case 'reports_data':
+            setReports(msg.data)
+            break
+          case 'new_report':
+            setReports(prev => [msg.data, ...prev])
+            break
         }
       } catch {
         // ignore malformed messages
@@ -244,7 +370,12 @@ export function useMonitorSocket(): MonitorState {
   return {
     connected, snapshots, alerts, analyses, account, uptime, env, isDelayed, multiTenant, oauthProviders,
     optionChain, agentStatus, agentConfig, authUser, authError,
+    watchlists, chatMessages, scheduleConfig, budgetStatus, reports, searchResults,
     requestChain, sendRaw, login: loginFn, register: registerFn, logout,
     saveAgentConfig, requestAgentConfig, sendTestAlert,
+    requestWatchlist, saveWatchlist, deleteWatchlistItem, syncTastytradeWatchlists,
+    searchSymbols: searchSymbolsFn, sendChatMessage, clearChat,
+    saveScheduleConfig, requestScheduleConfig, requestBudgetStatus,
+    requestReports, runAnalysisNow,
   }
 }

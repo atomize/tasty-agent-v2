@@ -1,11 +1,16 @@
 import { useState, useEffect } from 'react'
-import type { AgentConfigResponse } from '@tastytrade-monitor/shared'
+import type { AgentConfigResponse, ScheduleConfigResponse, BudgetStatus, ScheduleConfig } from '@tastytrade-monitor/shared'
 
 interface AgentSettingsProps {
   config: AgentConfigResponse | null
   onSave: (config: { provider: string; apiKey?: string; model?: string; maxBudgetUsd?: number; externalUrl?: string }) => void
   onRequest: () => void
   onTestAlert: (ticker: string) => void
+  scheduleConfig: ScheduleConfigResponse | null
+  budgetStatus: BudgetStatus | null
+  onSaveSchedule: (cfg: Partial<ScheduleConfig>) => void
+  onRequestSchedule: () => void
+  onRequestBudget: () => void
 }
 
 const MODELS = [
@@ -14,7 +19,7 @@ const MODELS = [
   'claude-haiku-3-20250422',
 ]
 
-export function AgentSettings({ config, onSave, onRequest, onTestAlert }: AgentSettingsProps) {
+export function AgentSettings({ config, onSave, onRequest, onTestAlert, scheduleConfig, budgetStatus, onSaveSchedule, onRequestSchedule, onRequestBudget }: AgentSettingsProps) {
   const [provider, setProvider] = useState<string>(config?.provider ?? 'none')
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState(config?.model ?? 'claude-sonnet-4-20250514')
@@ -23,9 +28,18 @@ export function AgentSettings({ config, onSave, onRequest, onTestAlert }: AgentS
   const [saved, setSaved] = useState(false)
   const [testFired, setTestFired] = useState(false)
 
+  const [schedEnabled, setSchedEnabled] = useState(true)
+  const [dailyBudget, setDailyBudget] = useState(2.0)
+  const [perRunBudget, setPerRunBudget] = useState(0.5)
+  const [maxTickersPerRun, setMaxTickersPerRun] = useState(10)
+  const [includeChains, setIncludeChains] = useState(true)
+  const [schedSaved, setSchedSaved] = useState(false)
+
   useEffect(() => {
     onRequest()
-  }, [onRequest])
+    onRequestSchedule()
+    onRequestBudget()
+  }, [onRequest, onRequestSchedule, onRequestBudget])
 
   useEffect(() => {
     if (!config) return
@@ -34,6 +48,15 @@ export function AgentSettings({ config, onSave, onRequest, onTestAlert }: AgentS
     setMaxBudget(config.maxBudgetUsd)
     setExternalUrl(config.externalUrl ?? '')
   }, [config])
+
+  useEffect(() => {
+    if (!scheduleConfig) return
+    setSchedEnabled(scheduleConfig.enabled)
+    setDailyBudget(scheduleConfig.dailyBudgetUsd)
+    setPerRunBudget(scheduleConfig.perRunBudgetUsd)
+    setMaxTickersPerRun(scheduleConfig.maxTickersPerRun)
+    setIncludeChains(scheduleConfig.includeChains)
+  }, [scheduleConfig])
 
   const handleSave = () => {
     const payload: Record<string, unknown> = { provider, model, maxBudgetUsd: maxBudget }
@@ -215,6 +238,151 @@ export function AgentSettings({ config, onSave, onRequest, onTestAlert }: AgentS
 
       {saved && (
         <p className="text-[11px] text-green-400 font-mono animate-pulse">Configuration saved to server</p>
+      )}
+
+      {/* Schedule Configuration */}
+      <div className="pt-4 border-t border-gray-800">
+        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-1">Scheduled Analysis</h2>
+        <p className="text-[11px] text-gray-600 font-mono mb-4">4x/day intraday analysis during market hours (9:45, 11:30, 1:30, 3:00 CT)</p>
+
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={schedEnabled}
+                onChange={e => setSchedEnabled(e.target.checked)}
+                className="accent-amber-500"
+              />
+              <span className="text-xs text-gray-400">Enable scheduled analysis</span>
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-[11px] text-gray-500 uppercase tracking-wide mb-1.5">
+              Daily Budget: ${dailyBudget.toFixed(2)}
+            </label>
+            <input
+              type="range"
+              min={0.5}
+              max={20}
+              step={0.5}
+              value={dailyBudget}
+              onChange={e => setDailyBudget(parseFloat(e.target.value))}
+              className="w-full accent-amber-500"
+            />
+            <div className="flex justify-between text-[10px] text-gray-700 font-mono">
+              <span>$0.50</span>
+              <span>$20.00</span>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] text-gray-500 uppercase tracking-wide mb-1.5">
+              Per-Run Budget: ${perRunBudget.toFixed(2)}
+            </label>
+            <input
+              type="range"
+              min={0.1}
+              max={5}
+              step={0.1}
+              value={perRunBudget}
+              onChange={e => setPerRunBudget(parseFloat(e.target.value))}
+              className="w-full accent-amber-500"
+            />
+            <div className="flex justify-between text-[10px] text-gray-700 font-mono">
+              <span>$0.10</span>
+              <span>$5.00</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <label className="block text-[11px] text-gray-500 uppercase tracking-wide mb-1.5">Max Tickers/Run</label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={maxTickersPerRun}
+                onChange={e => setMaxTickersPerRun(parseInt(e.target.value) || 10)}
+                className="w-full bg-[#0a0a0a] border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 font-mono focus:border-amber-500 focus:outline-none"
+              />
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer pt-4">
+              <input
+                type="checkbox"
+                checked={includeChains}
+                onChange={e => setIncludeChains(e.target.checked)}
+                className="accent-amber-500"
+              />
+              <span className="text-xs text-gray-400">Include option chains</span>
+            </label>
+          </div>
+
+          <button
+            onClick={() => {
+              onSaveSchedule({
+                enabled: schedEnabled,
+                dailyBudgetUsd: dailyBudget,
+                perRunBudgetUsd: perRunBudget,
+                maxTickersPerRun,
+                includeChains,
+              })
+              setSchedSaved(true)
+              setTimeout(() => setSchedSaved(false), 3000)
+            }}
+            className={`px-4 py-1.5 text-sm font-semibold rounded transition-colors ${
+              schedSaved
+                ? 'bg-green-600 text-white'
+                : 'bg-amber-500 hover:bg-amber-600 text-black'
+            }`}
+          >
+            {schedSaved ? 'Schedule Saved!' : 'Save Schedule'}
+          </button>
+        </div>
+      </div>
+
+      {/* Budget Usage */}
+      {budgetStatus && (
+        <div className="pt-4 border-t border-gray-800">
+          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-3">Token Usage</h2>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="text-gray-500">Today</span>
+              <span className={budgetStatus.paused ? 'text-red-400' : 'text-gray-300'}>
+                ${budgetStatus.dailySpentUsd.toFixed(2)} / ${budgetStatus.dailyBudgetUsd.toFixed(2)}
+                {budgetStatus.paused && ' PAUSED'}
+              </span>
+            </div>
+            <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  budgetStatus.usagePct > 90 ? 'bg-red-500' : budgetStatus.usagePct > 60 ? 'bg-amber-500' : 'bg-green-500'
+                }`}
+                style={{ width: `${Math.min(100, budgetStatus.usagePct)}%` }}
+              />
+            </div>
+            {budgetStatus.history.length > 0 && (
+              <div className="mt-3">
+                <span className="text-[10px] text-gray-600 uppercase tracking-wide">7-Day History</span>
+                <div className="mt-1 space-y-1">
+                  {budgetStatus.history.map(day => (
+                    <div key={day.date} className="flex items-center gap-2 text-[10px] font-mono">
+                      <span className="text-gray-600 w-12">{day.date.slice(5)}</span>
+                      <div className="flex-1 h-1 bg-gray-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-amber-500/60 rounded-full"
+                          style={{ width: `${Math.min(100, (day.total / budgetStatus.dailyBudgetUsd) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-gray-600 w-12 text-right">${day.total.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

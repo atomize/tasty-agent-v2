@@ -197,6 +197,87 @@ export const WsServerAgentConfigSchema = z.object({
 })
 export type WsServerAgentConfig = z.infer<typeof WsServerAgentConfigSchema>
 
+// ─── Watchlist schemas ───────────────────────────────────────────
+
+export const WatchlistItemSchema = z.object({
+  ticker: z.string(),
+  layer: z.string().nullable(),
+  strategies: z.array(z.string()),
+  thesis: z.string(),
+  instrumentType: z.enum(['equity', 'crypto']),
+  sortOrder: z.number(),
+})
+export type WatchlistItem = z.infer<typeof WatchlistItemSchema>
+
+export const WatchlistSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  items: z.array(WatchlistItemSchema),
+})
+export type Watchlist = z.infer<typeof WatchlistSchema>
+
+// ─── Chat schemas ────────────────────────────────────────────────
+
+export const ChatMessageSchema = z.object({
+  id: z.string(),
+  role: z.enum(['user', 'assistant']),
+  content: z.string(),
+  timestamp: z.string(),
+  costUsd: z.number().optional(),
+})
+export type ChatMessage = z.infer<typeof ChatMessageSchema>
+
+// ─── Schedule + Budget schemas ───────────────────────────────────
+
+export const ScheduleConfigSchema = z.object({
+  runsPerDay: z.number().min(1).max(8).default(4),
+  runTimesCt: z.array(z.string()).default(['09:45', '11:30', '13:30', '15:00']),
+  dailyBudgetUsd: z.number().min(0.5).max(20).default(2.0),
+  perRunBudgetUsd: z.number().min(0.1).max(5).default(0.5),
+  includeChains: z.boolean().default(true),
+  maxTickersPerRun: z.number().min(1).max(50).default(10),
+  enabled: z.boolean().default(true),
+})
+export type ScheduleConfig = z.infer<typeof ScheduleConfigSchema>
+
+export const ScheduleConfigResponseSchema = ScheduleConfigSchema.extend({
+  updatedAt: z.string().optional(),
+})
+export type ScheduleConfigResponse = z.infer<typeof ScheduleConfigResponseSchema>
+
+export const TokenUsageSummarySchema = z.object({
+  date: z.string(),
+  total: z.number(),
+  scheduled: z.number(),
+  chat: z.number(),
+  alert: z.number(),
+})
+export type TokenUsageSummary = z.infer<typeof TokenUsageSummarySchema>
+
+export const BudgetStatusSchema = z.object({
+  dailyBudgetUsd: z.number(),
+  dailySpentUsd: z.number(),
+  remainingUsd: z.number(),
+  usagePct: z.number(),
+  paused: z.boolean(),
+  history: z.array(TokenUsageSummarySchema),
+})
+export type BudgetStatus = z.infer<typeof BudgetStatusSchema>
+
+// ─── Analysis Report schemas ─────────────────────────────────────
+
+export const AnalysisReportSchema = z.object({
+  id: z.string(),
+  runTime: z.string(),
+  runType: z.enum(['morning', 'midday_1', 'midday_2', 'preclose', 'nextday', 'manual']),
+  tickers: z.array(z.string()),
+  report: z.string(),
+  costUsd: z.number(),
+  model: z.string(),
+  createdAt: z.string(),
+})
+export type AnalysisReport = z.infer<typeof AnalysisReportSchema>
+
 // ─── WS message unions ──────────────────────────────────────────
 
 export const WsMessageSchema = z.discriminatedUnion('type', [
@@ -244,6 +325,15 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   }),
   WsServerAuthResultSchema,
   WsServerAgentConfigSchema,
+  z.object({ type: z.literal('watchlist_data'), data: z.array(WatchlistSchema) }),
+  z.object({ type: z.literal('search_results'), data: z.array(z.object({ ticker: z.string(), description: z.string(), instrumentType: z.string() })) }),
+  z.object({ type: z.literal('chat_message'), data: ChatMessageSchema }),
+  z.object({ type: z.literal('chat_history'), data: z.array(ChatMessageSchema) }),
+  z.object({ type: z.literal('schedule_config'), data: ScheduleConfigResponseSchema }),
+  z.object({ type: z.literal('budget_status'), data: BudgetStatusSchema }),
+  z.object({ type: z.literal('reports_data'), data: z.array(AnalysisReportSchema) }),
+  z.object({ type: z.literal('new_report'), data: AnalysisReportSchema }),
+  z.object({ type: z.literal('agent_config_error'), data: z.object({ error: z.string() }) }),
 ])
 export type WsMessage = z.infer<typeof WsMessageSchema>
 
@@ -268,6 +358,48 @@ export const WsClientMessageSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('request_agent_config'),
+  }),
+  z.object({
+    type: z.literal('save_watchlist'),
+    data: z.object({ name: z.string(), items: z.array(WatchlistItemSchema) }),
+  }),
+  z.object({
+    type: z.literal('request_watchlist'),
+  }),
+  z.object({
+    type: z.literal('sync_tastytrade_watchlists'),
+  }),
+  z.object({
+    type: z.literal('search_symbols'),
+    query: z.string(),
+  }),
+  z.object({
+    type: z.literal('delete_watchlist_item'),
+    data: z.object({ watchlistName: z.string(), ticker: z.string() }),
+  }),
+  z.object({
+    type: z.literal('chat_send'),
+    data: z.object({ message: z.string() }),
+  }),
+  z.object({
+    type: z.literal('chat_clear'),
+  }),
+  z.object({
+    type: z.literal('save_schedule_config'),
+    data: ScheduleConfigSchema,
+  }),
+  z.object({
+    type: z.literal('request_schedule_config'),
+  }),
+  z.object({
+    type: z.literal('request_budget_status'),
+  }),
+  z.object({
+    type: z.literal('request_reports'),
+    data: z.object({ date: z.string().optional() }).optional(),
+  }),
+  z.object({
+    type: z.literal('run_analysis_now'),
   }),
 ])
 export type WsClientMessage = z.infer<typeof WsClientMessageSchema>
