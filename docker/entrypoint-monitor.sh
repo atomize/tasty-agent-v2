@@ -8,4 +8,4 @@ echo "[monitor] SERVE_DASHBOARD=${SERVE_DASHBOARD}"
 echo "[monitor] PORT=${PORT:-3001} (WS_PORT=${WS_PORT:-<unset>})"
 echo "[monitor] TASTYTRADE_ENV=${TASTYTRADE_ENV:-sandbox}"
 
-exec node /app/packages/monitor/dist/main.js "$@"
+exec node --max-old-space-size=400 /app/packages/monitor/dist/main.js "$@"

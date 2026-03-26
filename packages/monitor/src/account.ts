@@ -71,7 +71,7 @@ export async function fetchAccountData(): Promise<AccountContext> {
   }
 }
 
-export function startAccountPolling(intervalMs = 30_000): void {
+export function startAccountPolling(intervalMs = 120_000): void {
   fetchAccountData()
   setInterval(fetchAccountData, intervalMs)
 }

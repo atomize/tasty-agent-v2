@@ -74,6 +74,14 @@ async function main() {
 
   startScheduledTriggers()
 
+  setInterval(() => {
+    const mem = process.memoryUsage()
+    const rss = (mem.rss / 1024 / 1024).toFixed(1)
+    const heap = (mem.heapUsed / 1024 / 1024).toFixed(1)
+    const heapTotal = (mem.heapTotal / 1024 / 1024).toFixed(1)
+    log.info(`Memory: RSS=${rss}MB heap=${heap}/${heapTotal}MB`)
+  }, 300_000)
+
   log.info('Monitor is running. Press Ctrl+C to stop.')
 }
 

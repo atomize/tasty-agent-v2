@@ -11,6 +11,10 @@ const WEBHOOK_TIMEOUT_MS = 60_000
 const cooldowns = new Map<string, number>()
 const wsPool = new Map<number, WebSocket>()
 
+// Serial queue: process one alert at a time to prevent OOM from parallel SDK/API calls
+const alertQueue: Array<{ cfg: AgentConfigRow & { email: string }; alert: OptionsAlert }> = []
+let processing = false
+
 export function initOrchestrator(): void {
   onAlertForOrchestrator(dispatchAlert)
   log.info('Agent orchestrator initialized (multi-tenant dispatch)')
@@ -27,19 +31,40 @@ async function dispatchAlert(alert: OptionsAlert): Promise<void> {
   for (const cfg of configs) {
     const cooldownKey = `${cfg.user_id}:${alert.trigger.ticker}:${alert.trigger.type}`
     const last = cooldowns.get(cooldownKey)
-    if (last && Date.now() - last < COOLDOWN_MS) continue
+    if (last && Date.now() - last < COOLDOWN_MS) {
+      log.info(`Alert ${alert.trigger.ticker}/${alert.trigger.type} for user ${cfg.email} skipped (cooldown)`)
+      continue
+    }
     cooldowns.set(cooldownKey, Date.now())
-
-    dispatchToUser(cfg, alert).catch(err => {
-      log.warn(`Orchestrator dispatch failed for user ${cfg.user_id}: ${(err as Error).message}`)
-    })
+    enqueue(cfg, alert)
   }
+}
+
+function enqueue(cfg: AgentConfigRow & { email: string }, alert: OptionsAlert): void {
+  alertQueue.push({ cfg, alert })
+  if (!processing) void processQueue()
+}
+
+async function processQueue(): Promise<void> {
+  if (processing) return
+  processing = true
+
+  while (alertQueue.length > 0) {
+    const item = alertQueue.shift()!
+    try {
+      await dispatchToUser(item.cfg, item.alert)
+    } catch (err) {
+      log.warn(`Orchestrator dispatch failed for user ${item.cfg.email}: ${(err as Error).message}`)
+    }
+  }
+
+  processing = false
 }
 
 async function dispatchToUser(cfg: AgentConfigRow & { email: string }, alert: OptionsAlert): Promise<void> {
   switch (cfg.provider) {
     case 'claude-sdk':
-      await dispatchClaudeSDK(cfg, alert)
+      await dispatchClaudeDirect(cfg, alert)
       break
     case 'webhook':
       await dispatchWebhook(cfg, alert)
@@ -50,11 +75,11 @@ async function dispatchToUser(cfg: AgentConfigRow & { email: string }, alert: Op
   }
 }
 
-// ─── Claude SDK mode ─────────────────────────────────────────────
+// ─── Claude direct API (lightweight, no subprocess) ───────────────
 
-async function dispatchClaudeSDK(cfg: AgentConfigRow & { email: string }, alert: OptionsAlert): Promise<void> {
+async function dispatchClaudeDirect(cfg: AgentConfigRow & { email: string }, alert: OptionsAlert): Promise<void> {
   if (!cfg.encrypted_api_key) {
-    log.warn(`No API key for user ${cfg.email}, skipping claude-sdk dispatch`)
+    log.warn(`No API key for user ${cfg.email}, skipping dispatch`)
     return
   }
 
@@ -62,21 +87,22 @@ async function dispatchClaudeSDK(cfg: AgentConfigRow & { email: string }, alert:
 
   try {
     const apiKey = decrypt(cfg.encrypted_api_key)
-    const { invokeClaudeSDK } = await import('@tastytrade-monitor/claude-agent')
+    const { analyzeAlertDirect } = await import('@tastytrade-monitor/claude-agent/invoke-direct')
     const prompt = buildPrompt(alert)
-    const analysis = await invokeClaudeSDK(prompt, {
+    const analysis = await analyzeAlertDirect(prompt, {
       apiKey,
       model: cfg.model,
-      maxBudgetUsd: cfg.max_budget_usd,
     })
 
     if (analysis) {
       postAnalysis(alert, analysis, cfg)
+    } else {
+      log.warn(`Empty analysis for ${alert.trigger.ticker} (user: ${cfg.email})`)
     }
     broadcastAgentStatus(cfg, 'idle', null)
   } catch (err) {
     const msg = (err as Error).message?.slice(0, 200) ?? 'unknown error'
-    log.warn(`Claude SDK failed for user ${cfg.email}: ${msg}`)
+    log.warn(`Claude API failed for user ${cfg.email}: ${msg}`)
     broadcastAgentStatus(cfg, 'error', alert.trigger.ticker, msg)
   }
 }
@@ -146,7 +172,7 @@ async function dispatchWebSocket(cfg: AgentConfigRow & { email: string }, alert:
             ws.off('message', handler)
             resolve(msg.data.analysis as string)
           }
-        } catch { /* ignore */ }
+        } catch { /* ignore malformed frames */ }
       }
 
       ws.on('message', handler)
@@ -242,7 +268,7 @@ function broadcastAgentStatus(cfg: AgentConfigRow & { email: string }, state: 'i
       currentTicker: ticker,
       lastError: error ?? null,
       lastAlertTime: new Date().toISOString(),
-      queueDepth: 0,
+      queueDepth: alertQueue.length,
     },
   })
 }
