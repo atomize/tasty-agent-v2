@@ -8,6 +8,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/monitor/package.json packages/monitor/
 COPY packages/dashboard/package.json packages/dashboard/
 COPY packages/claude-agent/package.json packages/claude-agent/
+COPY packages/paper-trader/package.json packages/paper-trader/
 
 RUN pnpm install --frozen-lockfile
 
@@ -15,10 +16,12 @@ COPY packages/shared/ packages/shared/
 COPY packages/monitor/ packages/monitor/
 COPY packages/dashboard/ packages/dashboard/
 COPY packages/claude-agent/ packages/claude-agent/
+COPY packages/paper-trader/ packages/paper-trader/
 COPY tsconfig.base.json ./
 
 RUN pnpm --filter @tastytrade-monitor/shared build \
  && pnpm --filter @tastytrade-monitor/claude-agent build \
+ && pnpm --filter @tastytrade-monitor/paper-trader build \
  && pnpm --filter @tastytrade-monitor/monitor build \
  && pnpm --filter @tastytrade-monitor/dashboard build
 
@@ -37,6 +40,9 @@ COPY --from=build /app/packages/monitor/package.json ./packages/monitor/
 COPY --from=build /app/packages/monitor/node_modules ./packages/monitor/node_modules
 COPY --from=build /app/packages/dashboard/dist ./packages/dashboard/dist
 COPY --from=build /app/packages/dashboard/package.json ./packages/dashboard/
+
+COPY --from=build /app/packages/paper-trader/dist ./packages/paper-trader/dist
+COPY --from=build /app/packages/paper-trader/package.json ./packages/paper-trader/
 
 COPY packages/pi-agent/ ./packages/pi-agent/
 RUN cd /app/packages/pi-agent && npm install --production --ignore-scripts

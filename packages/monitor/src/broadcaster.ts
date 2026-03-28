@@ -513,6 +513,69 @@ export function broadcastNewReport(report: AnalysisReport): void {
   broadcast({ type: 'new_report', data: report } as WsMessage)
 }
 
+// ─── Paper trading handlers ─────────────────────────────────────
+
+async function handleRequestPaperState(ws: WebSocket): Promise<void> {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  try {
+    const { getOrCreateAccount, getOpenPositions, getRecentOrders } = await import('@tastytrade-monitor/paper-trader')
+    const account = getOrCreateAccount(auth.userId)
+    const positions = getOpenPositions(auth.userId)
+    const orders = getRecentOrders(auth.userId)
+    send(ws, { type: 'paper_account', data: account } as WsMessage)
+    send(ws, { type: 'paper_positions', data: positions } as WsMessage)
+    send(ws, { type: 'paper_orders', data: orders } as WsMessage)
+  } catch (err) {
+    log.warn(`Paper state request failed: ${(err as Error).message}`)
+  }
+}
+
+async function handlePaperConfigure(ws: WebSocket, data: Record<string, unknown>): Promise<void> {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  try {
+    const { getOrCreateAccount, updateAccountConfig } = await import('@tastytrade-monitor/paper-trader')
+    getOrCreateAccount(auth.userId)
+    updateAccountConfig(
+      auth.userId,
+      data.enabled !== false,
+      typeof data.startingBalance === 'number' ? data.startingBalance : undefined,
+      typeof data.useAITrader === 'boolean' ? data.useAITrader : undefined,
+    )
+    const account = getOrCreateAccount(auth.userId)
+    send(ws, { type: 'paper_account', data: account } as WsMessage)
+  } catch (err) {
+    log.warn(`Paper configure failed: ${(err as Error).message}`)
+  }
+}
+
+async function handlePaperClosePosition(ws: WebSocket, positionId: string): Promise<void> {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  try {
+    const { closePositionManual } = await import('@tastytrade-monitor/paper-trader')
+    closePositionManual(auth.userId, positionId)
+  } catch (err) {
+    log.warn(`Paper close position failed: ${(err as Error).message}`)
+  }
+}
+
+async function handlePaperReset(ws: WebSocket): Promise<void> {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  try {
+    const { resetAccountInDb, getOrCreateAccount } = await import('@tastytrade-monitor/paper-trader')
+    resetAccountInDb(auth.userId)
+    const account = getOrCreateAccount(auth.userId)
+    send(ws, { type: 'paper_account', data: account } as WsMessage)
+    send(ws, { type: 'paper_positions', data: [] } as WsMessage)
+    send(ws, { type: 'paper_orders', data: [] } as WsMessage)
+  } catch (err) {
+    log.warn(`Paper reset failed: ${(err as Error).message}`)
+  }
+}
+
 // ─── Chain request handler ──────────────────────────────────────
 
 async function handleChainRequest(ws: WebSocket, ticker: string): Promise<void> {
@@ -669,5 +732,28 @@ const authenticatedWsRoutes: Record<string, AuthenticatedWsRoute> = {
 
   run_analysis_now(ws) {
     void handleRunAnalysisNow(ws)
+  },
+
+  request_paper_state(ws) {
+    void handleRequestPaperState(ws)
+  },
+
+  paper_configure(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      void handlePaperConfigure(ws, data as Record<string, unknown>)
+    }
+  },
+
+  paper_close_position(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object') {
+      const positionId = (data as Record<string, unknown>).positionId
+      if (typeof positionId === 'string') void handlePaperClosePosition(ws, positionId)
+    }
+  },
+
+  paper_reset(ws) {
+    void handlePaperReset(ws)
   },
 }

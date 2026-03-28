@@ -11,6 +11,13 @@ const WEBHOOK_TIMEOUT_MS = 60_000
 const cooldowns = new Map<string, number>()
 const wsPool = new Map<number, WebSocket>()
 
+type AnalysisListener = (userId: number, alert: OptionsAlert, analysisText: string, recommendation: unknown) => void
+let analysisListener: AnalysisListener | null = null
+
+export function onAnalysisForPaperTrader(listener: AnalysisListener): void {
+  analysisListener = listener
+}
+
 // Serial queue: process one alert at a time to prevent OOM from parallel SDK/API calls
 const alertQueue: Array<{ cfg: AgentConfigRow & { email: string }; alert: OptionsAlert }> = []
 let processing = false
@@ -89,13 +96,16 @@ async function dispatchClaudeDirect(cfg: AgentConfigRow & { email: string }, ale
     const apiKey = decrypt(cfg.encrypted_api_key)
     const { analyzeAlertDirect } = await import('@tastytrade-monitor/claude-agent/invoke-direct')
     const prompt = buildPrompt(alert)
-    const analysis = await analyzeAlertDirect(prompt, {
+    const result = await analyzeAlertDirect(prompt, {
       apiKey,
       model: cfg.model,
     })
 
-    if (analysis) {
-      postAnalysis(alert, analysis, cfg)
+    if (result.text) {
+      postAnalysis(alert, result.text, cfg)
+      if (analysisListener) {
+        analysisListener(cfg.user_id, alert, result.text, result.recommendation)
+      }
     } else {
       log.warn(`Empty analysis for ${alert.trigger.ticker} (user: ${cfg.email})`)
     }

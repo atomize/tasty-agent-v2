@@ -19,9 +19,12 @@ import { startScheduledTriggers } from './marketHours.js'
 import { initOutputHandlers, type OutputMode } from './outputModes.js'
 import { setOutputMode, log } from './logger.js'
 import { getUniqueSymbols } from './watchlist.config.js'
-import { initEncryption } from './crypto.js'
-import { getDb } from './db.js'
-import { initOrchestrator } from './agent-orchestrator.js'
+import { initEncryption, decrypt } from './crypto.js'
+import { getDb, getAgentConfig } from './db.js'
+import { initOrchestrator, onAnalysisForPaperTrader } from './agent-orchestrator.js'
+import type { PaperOrder, PaperPosition, PaperAccount } from '@tastytrade-monitor/shared'
+import { getSnapshot } from './state.js'
+import { broadcastToAll } from './broadcaster.js'
 
 function parseArgs(): OutputMode {
   const modeIdx = process.argv.indexOf('--mode')
@@ -68,7 +71,10 @@ async function main() {
 
   if (mode !== 'pipe') {
     startBroadcaster()
-    if (multiTenant) initOrchestrator()
+    if (multiTenant) {
+      initOrchestrator()
+      await initPaperTrading()
+    }
     log.info(`Dashboard WebSocket: ws://localhost:${config.server.wsPort}`)
   }
 
@@ -83,6 +89,49 @@ async function main() {
   }, 300_000)
 
   log.info('Monitor is running. Press Ctrl+C to stop.')
+}
+
+async function initPaperTrading(): Promise<void> {
+  try {
+    const { initPaperTraderEngine, handleAnalysis, tickMarkToMarket } = await import('@tastytrade-monitor/paper-trader')
+    const database = getDb()
+    const snapshotProvider = { getSnapshot: (ticker: string) => getSnapshot(ticker) as { price: number; bid: number; ask: number } | undefined }
+
+    initPaperTraderEngine(database, snapshotProvider, {
+      onOrderFilled(order: PaperOrder, _position: PaperPosition, account: PaperAccount) {
+        broadcastToAll({ type: 'paper_trade_executed', data: order })
+        broadcastToAll({ type: 'paper_account', data: account })
+      },
+      onOrderRejected(order: PaperOrder, account: PaperAccount) {
+        broadcastToAll({ type: 'paper_trade_executed', data: order })
+        broadcastToAll({ type: 'paper_account', data: account })
+      },
+      onPositionClosed(_position: PaperPosition, _pnl: number, account: PaperAccount) {
+        broadcastToAll({ type: 'paper_account', data: account })
+      },
+      onAccountUpdated(account: PaperAccount, positions: PaperPosition[]) {
+        broadcastToAll({ type: 'paper_account', data: account })
+        broadcastToAll({ type: 'paper_positions', data: positions })
+      },
+      log,
+    }, async (userId: number) => {
+      const cfg = getAgentConfig(userId)
+      if (!cfg?.encrypted_api_key) return null
+      const apiKey = decrypt(cfg.encrypted_api_key)
+      const { chatDirect } = await import('@tastytrade-monitor/claude-agent/invoke-direct')
+      return { chatDirect, apiKey, model: cfg.model }
+    })
+
+    onAnalysisForPaperTrader((userId, alert, analysisText, recommendation) => {
+      void handleAnalysis({ userId, alertId: alert.id, ticker: alert.trigger.ticker, analysisText, recommendation: recommendation as { signal: string; trade: string; size: string; thesis: string; stop: string; invalidation: string } | null })
+    })
+
+    setInterval(tickMarkToMarket, 10_000)
+
+    log.info('Paper trading engine initialized')
+  } catch (err) {
+    log.warn(`Paper trading init failed: ${(err as Error).message}`)
+  }
 }
 
 main().catch((err) => {

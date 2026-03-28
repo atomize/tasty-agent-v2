@@ -13,7 +13,7 @@
     "agent:claude": "cd packages/claude-agent && npx tsx src/runner.ts",
     "dev:full": "concurrently \"pnpm monitor\" \"pnpm dashboard\" \"pnpm agent:start\"",
     "dev:claude": "concurrently \"pnpm monitor\" \"pnpm dashboard\" \"pnpm agent:claude\"",
-    "build": "pnpm --filter @tastytrade-monitor/shared build && pnpm --filter @tastytrade-monitor/claude-agent build && pnpm --filter @tastytrade-monitor/monitor build && pnpm --filter @tastytrade-monitor/dashboard build",
+    "build": "pnpm --filter @tastytrade-monitor/shared build && pnpm --filter @tastytrade-monitor/claude-agent build && pnpm --filter @tastytrade-monitor/paper-trader build && pnpm --filter @tastytrade-monitor/monitor build && pnpm --filter @tastytrade-monitor/dashboard build",
     "typecheck": "pnpm -r run typecheck"
   },
   "devDependencies": {

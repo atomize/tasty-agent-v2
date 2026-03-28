@@ -278,6 +278,77 @@ export const AnalysisReportSchema = z.object({
 })
 export type AnalysisReport = z.infer<typeof AnalysisReportSchema>
 
+// ─── Paper Trading schemas ────────────────────────────────────────
+
+export const TradeSignalSchema = z.object({
+  alertId: z.string(),
+  ticker: z.string(),
+  action: z.enum(['buy', 'sell']),
+  instrument: z.enum(['call', 'put', 'stock']),
+  strike: z.number().nullable(),
+  expiration: z.string().nullable(),
+  price: z.number(),
+  sizePercent: z.number(),
+  thesis: z.string(),
+  stopCondition: z.string(),
+  invalidation: z.string(),
+})
+export type TradeSignal = z.infer<typeof TradeSignalSchema>
+
+export const TraderDecisionSchema = z.object({
+  action: z.enum(['execute', 'skip', 'modify']),
+  reason: z.string(),
+  adjustedSizePercent: z.number().optional(),
+  confidence: z.number(),
+  usedAI: z.boolean(),
+})
+export type TraderDecision = z.infer<typeof TraderDecisionSchema>
+
+export const PaperOrderSchema = z.object({
+  id: z.string(),
+  userId: z.number(),
+  signal: TradeSignalSchema,
+  status: z.enum(['pending', 'filled', 'rejected', 'cancelled']),
+  decision: TraderDecisionSchema,
+  filledPrice: z.number().nullable(),
+  filledAt: z.string().nullable(),
+  createdAt: z.string(),
+})
+export type PaperOrder = z.infer<typeof PaperOrderSchema>
+
+export const PaperPositionSchema = z.object({
+  id: z.string(),
+  userId: z.number(),
+  orderId: z.string(),
+  ticker: z.string(),
+  side: z.enum(['long', 'short']),
+  instrument: z.enum(['call', 'put', 'stock']),
+  strike: z.number().nullable(),
+  expiration: z.string().nullable(),
+  quantity: z.number(),
+  avgCost: z.number(),
+  currentPrice: z.number(),
+  unrealizedPnl: z.number(),
+  unrealizedPnlPct: z.number(),
+  delta: z.number(),
+  openedAt: z.string(),
+})
+export type PaperPosition = z.infer<typeof PaperPositionSchema>
+
+export const PaperAccountSchema = z.object({
+  userId: z.number(),
+  startingBalance: z.number(),
+  cash: z.number(),
+  equity: z.number(),
+  unrealizedPnl: z.number(),
+  realizedPnl: z.number(),
+  totalTrades: z.number(),
+  winRate: z.number(),
+  enabled: z.boolean(),
+  useAITrader: z.boolean(),
+})
+export type PaperAccount = z.infer<typeof PaperAccountSchema>
+
 // ─── WS message unions ──────────────────────────────────────────
 
 export const WsMessageSchema = z.discriminatedUnion('type', [
@@ -334,6 +405,10 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('reports_data'), data: z.array(AnalysisReportSchema) }),
   z.object({ type: z.literal('new_report'), data: AnalysisReportSchema }),
   z.object({ type: z.literal('agent_config_error'), data: z.object({ error: z.string() }) }),
+  z.object({ type: z.literal('paper_account'), data: PaperAccountSchema }),
+  z.object({ type: z.literal('paper_positions'), data: z.array(PaperPositionSchema) }),
+  z.object({ type: z.literal('paper_orders'), data: z.array(PaperOrderSchema) }),
+  z.object({ type: z.literal('paper_trade_executed'), data: PaperOrderSchema }),
 ])
 export type WsMessage = z.infer<typeof WsMessageSchema>
 
@@ -400,6 +475,20 @@ export const WsClientMessageSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('run_analysis_now'),
+  }),
+  z.object({
+    type: z.literal('paper_configure'),
+    data: z.object({ enabled: z.boolean(), startingBalance: z.number().optional(), useAITrader: z.boolean().optional() }),
+  }),
+  z.object({
+    type: z.literal('paper_close_position'),
+    data: z.object({ positionId: z.string() }),
+  }),
+  z.object({
+    type: z.literal('paper_reset'),
+  }),
+  z.object({
+    type: z.literal('request_paper_state'),
   }),
 ])
 export type WsClientMessage = z.infer<typeof WsClientMessageSchema>

@@ -13,6 +13,7 @@ import { AgentSettings } from './components/AgentSettings.js'
 import { WatchlistBuilder } from './components/WatchlistBuilder.js'
 import { ReportsPanel } from './components/ReportsPanel.js'
 import { ChatPanel, ChatToggleButton } from './components/ChatPanel.js'
+import { PaperTradingPanel } from './components/PaperTradingPanel.js'
 
 function AgentStatusIndicator({ status }: { status: AgentStatus | null }) {
   if (!status) {
@@ -41,7 +42,7 @@ function AgentStatusIndicator({ status }: { status: AgentStatus | null }) {
   )
 }
 
-type Tab = 'watchlist' | 'watchlist_builder' | 'options' | 'alerts' | 'positions' | 'analysis' | 'reports' | 'agent' | 'settings'
+type Tab = 'watchlist' | 'watchlist_builder' | 'options' | 'alerts' | 'positions' | 'analysis' | 'paper' | 'reports' | 'agent' | 'settings'
 
 export function App() {
   const state = useMonitorSocket()
@@ -49,12 +50,14 @@ export function App() {
     connected, snapshots, alerts, analyses, account, uptime, env, isDelayed,
     multiTenant, oauthProviders, optionChain, agentStatus, agentConfig, authUser, authError,
     watchlists, chatMessages, scheduleConfig, budgetStatus, reports, searchResults,
+    paperAccount, paperPositions, paperOrders,
     requestChain, sendRaw, login, register, logout,
     saveAgentConfig, requestAgentConfig, sendTestAlert,
     requestWatchlist, saveWatchlist, deleteWatchlistItem, syncTastytradeWatchlists,
     searchSymbols, sendChatMessage, clearChat,
     saveScheduleConfig, requestScheduleConfig, requestBudgetStatus,
     requestReports, runAnalysisNow,
+    requestPaperState, paperConfigure, paperClosePosition, paperReset,
   } = state
   const [activeTab, setActiveTab] = useState<Tab>('watchlist')
   const [chatOpen, setChatOpen] = useState(false)
@@ -72,6 +75,7 @@ export function App() {
     { id: 'alerts', label: 'Alerts', count: alerts.length },
     { id: 'positions', label: 'Positions', count: account.openPositions.length },
     { id: 'analysis', label: 'AI Analysis', count: analyses.length || undefined },
+    ...(multiTenant ? [{ id: 'paper' as Tab, label: 'Paper Trading', count: paperPositions.length || undefined }] : []),
     ...(multiTenant ? [{ id: 'reports' as Tab, label: 'Reports', count: reports.length || undefined }] : []),
     { id: 'agent', label: 'Agent Export' },
     ...(multiTenant ? [{ id: 'settings' as Tab, label: 'Settings' }] : []),
@@ -157,6 +161,17 @@ export function App() {
         {activeTab === 'alerts' && <AlertFeed alerts={alerts} />}
         {activeTab === 'positions' && <PositionsPanel account={account} env={env} />}
         {activeTab === 'analysis' && <AnalysisPanel analyses={analyses} agentStatus={agentStatus} />}
+        {activeTab === 'paper' && (
+          <PaperTradingPanel
+            account={paperAccount}
+            positions={paperPositions}
+            orders={paperOrders}
+            onRequestState={requestPaperState}
+            onConfigure={paperConfigure}
+            onClosePosition={paperClosePosition}
+            onReset={paperReset}
+          />
+        )}
         {activeTab === 'reports' && (
           <ReportsPanel
             reports={reports}

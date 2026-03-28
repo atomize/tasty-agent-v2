@@ -4,6 +4,7 @@ import type {
   AgentAnalysis, AgentStatus, AgentConfigResponse,
   Watchlist, ChatMessage, ScheduleConfigResponse, BudgetStatus, AnalysisReport,
   WatchlistItem, ScheduleConfig,
+  PaperAccount, PaperPosition, PaperOrder,
 } from '@tastytrade-monitor/shared'
 
 export interface AuthUser {
@@ -53,6 +54,13 @@ export interface MonitorState {
   requestReports: (date?: string) => void
   runAnalysisNow: () => void
   searchResults: { ticker: string; description: string; instrumentType: string }[]
+  paperAccount: PaperAccount | null
+  paperPositions: PaperPosition[]
+  paperOrders: PaperOrder[]
+  requestPaperState: () => void
+  paperConfigure: (config: { enabled: boolean; startingBalance?: number; useAITrader?: boolean }) => void
+  paperClosePosition: (positionId: string) => void
+  paperReset: () => void
 }
 
 function getWsUrl(): string {
@@ -95,6 +103,9 @@ export function useMonitorSocket(): MonitorState {
   const [budgetStatus, setBudgetStatus] = useState<BudgetStatus | null>(null)
   const [reports, setReports] = useState<AnalysisReport[]>([])
   const [searchResults, setSearchResults] = useState<{ ticker: string; description: string; instrumentType: string }[]>([])
+  const [paperAccount, setPaperAccount] = useState<PaperAccount | null>(null)
+  const [paperPositions, setPaperPositions] = useState<PaperPosition[]>([])
+  const [paperOrders, setPaperOrders] = useState<PaperOrder[]>([])
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -237,6 +248,30 @@ export function useMonitorSocket(): MonitorState {
     }
   }, [])
 
+  const requestPaperState = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'request_paper_state' }))
+    }
+  }, [])
+
+  const paperConfigure = useCallback((config: { enabled: boolean; startingBalance?: number; useAITrader?: boolean }) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'paper_configure', data: config }))
+    }
+  }, [])
+
+  const paperClosePosition = useCallback((positionId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'paper_close_position', data: { positionId } }))
+    }
+  }, [])
+
+  const paperReset = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'paper_reset' }))
+    }
+  }, [])
+
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
@@ -335,6 +370,18 @@ export function useMonitorSocket(): MonitorState {
           case 'new_report':
             setReports(prev => [msg.data, ...prev])
             break
+          case 'paper_account':
+            setPaperAccount(msg.data)
+            break
+          case 'paper_positions':
+            setPaperPositions(msg.data)
+            break
+          case 'paper_orders':
+            setPaperOrders(msg.data)
+            break
+          case 'paper_trade_executed':
+            setPaperOrders(prev => [msg.data, ...prev].slice(0, 50))
+            break
         }
       } catch {
         // ignore malformed messages
@@ -377,5 +424,7 @@ export function useMonitorSocket(): MonitorState {
     searchSymbols: searchSymbolsFn, sendChatMessage, clearChat,
     saveScheduleConfig, requestScheduleConfig, requestBudgetStatus,
     requestReports, runAnalysisNow,
+    paperAccount, paperPositions, paperOrders,
+    requestPaperState, paperConfigure, paperClosePosition, paperReset,
   }
 }

@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { TradeRecommendationSchema, formatRecommendation } from './schema.js'
+import type { TradeRecommendation } from './schema.js'
 
 export interface DirectInvokeOptions {
   apiKey: string
@@ -7,15 +8,20 @@ export interface DirectInvokeOptions {
   maxTokens?: number
 }
 
+export interface AnalysisResult {
+  text: string
+  recommendation: TradeRecommendation | null
+}
+
 /**
  * Lightweight alert analysis using the Anthropic Messages API directly.
- * Unlike invokeClaudeSDK (which spawns a subprocess via the Agent SDK),
- * this makes a single HTTP call — ~0 extra memory overhead.
+ * Returns both formatted text (for dashboard display) and the structured
+ * TradeRecommendation (for paper trader) when parsing succeeds.
  */
 export async function analyzeAlertDirect(
   prompt: string,
   options: DirectInvokeOptions,
-): Promise<string> {
+): Promise<AnalysisResult> {
   const { apiKey, model, maxTokens = 1024 } = options
 
   const client = new Anthropic({ apiKey })
@@ -33,15 +39,15 @@ export async function analyzeAlertDirect(
     .map(b => b.text)
     .join('')
 
-  if (!text) return ''
+  if (!text) return { text: '', recommendation: null }
 
   try {
     const cleaned = text.replace(/```json\s*|\s*```/g, '').trim()
     const parsed = JSON.parse(cleaned)
     const rec = TradeRecommendationSchema.parse(parsed)
-    return formatRecommendation(rec)
+    return { text: formatRecommendation(rec), recommendation: rec }
   } catch {
-    return text.slice(0, 2000)
+    return { text: text.slice(0, 2000), recommendation: null }
   }
 }
 

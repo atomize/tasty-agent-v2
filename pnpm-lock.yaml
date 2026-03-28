@@ -88,6 +88,9 @@ importers:
       '@tastytrade-monitor/claude-agent':
         specifier: workspace:*
         version: link:../claude-agent
+      '@tastytrade-monitor/paper-trader':
+        specifier: workspace:*
+        version: link:../paper-trader
       '@tastytrade-monitor/shared':
         specifier: workspace:*
         version: link:../shared
@@ -140,6 +143,19 @@ importers:
       tsx:
         specifier: ^4.19.4
         version: 4.21.0
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+
+  packages/paper-trader:
+    dependencies:
+      '@tastytrade-monitor/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
       typescript:
         specifier: ^5.8.2
         version: 5.9.3

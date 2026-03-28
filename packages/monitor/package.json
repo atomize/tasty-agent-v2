@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@tastytrade-monitor/claude-agent": "workspace:*",
+    "@tastytrade-monitor/paper-trader": "workspace:*",
     "@tastytrade-monitor/shared": "workspace:*",
     "@tastytrade/api": "^7.0.1",
     "arctic": "^3.7.0",

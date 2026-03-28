@@ -26,6 +26,11 @@ export {
   TokenUsageSummarySchema,
   BudgetStatusSchema,
   AnalysisReportSchema,
+  TradeSignalSchema,
+  TraderDecisionSchema,
+  PaperOrderSchema,
+  PaperPositionSchema,
+  PaperAccountSchema,
 } from './alert.schema.js'
 
 export type {
@@ -56,4 +61,9 @@ export type {
   TokenUsageSummary,
   BudgetStatus,
   AnalysisReport,
+  TradeSignal,
+  TraderDecision,
+  PaperOrder,
+  PaperPosition,
+  PaperAccount,
 } from './alert.schema.js'
