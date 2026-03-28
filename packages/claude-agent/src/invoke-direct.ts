@@ -45,6 +45,40 @@ export async function analyzeAlertDirect(
   }
 }
 
+export interface ChatDirectOptions {
+  apiKey: string
+  model: string
+  systemPrompt: string
+  maxTokens?: number
+}
+
+export async function chatDirect(
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  options: ChatDirectOptions,
+): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+  const { apiKey, model, systemPrompt, maxTokens = 2048 } = options
+
+  const client = new Anthropic({ apiKey })
+
+  const response = await client.messages.create({
+    model,
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: messages.map(m => ({ role: m.role, content: m.content })),
+  })
+
+  const text = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map(b => b.text)
+    .join('')
+
+  return {
+    text,
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+  }
+}
+
 export function estimateAlertCost(model: string): number {
   const rates: Record<string, { inPer1k: number; outPer1k: number }> = {
     'claude-sonnet-4-20250514': { inPer1k: 0.003, outPer1k: 0.015 },

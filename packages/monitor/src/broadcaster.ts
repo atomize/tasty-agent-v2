@@ -52,6 +52,13 @@ export function onAlertForOrchestrator(handler: OrchestratorHandler): void {
 }
 
 export function broadcastToAll(msg: WsMessage | Record<string, unknown>): void {
+  const typed = msg as Record<string, unknown>
+  if (typed.type === 'agent_analysis' && typed.data) {
+    pushAnalysis(typed.data as AgentAnalysis)
+  }
+  if (typed.type === 'agent_status' && typed.data) {
+    agentStatus = typed.data as AgentStatus
+  }
   broadcast(msg)
 }
 
@@ -624,11 +631,11 @@ const authenticatedWsRoutes: Record<string, AuthenticatedWsRoute> = {
     if (typeof msg.query === 'string') void handleSearchSymbols(ws, msg.query)
   },
 
-  chat_send(ws, msg) {
+  async chat_send(ws, msg) {
     const data = msg.data
     if (data && typeof data === 'object' && !Array.isArray(data)) {
       const m = (data as Record<string, unknown>).message
-      if (typeof m === 'string') void handleChatSend(ws, m)
+      if (typeof m === 'string') await handleChatSend(ws, m)
     }
   },
 

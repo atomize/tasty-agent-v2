@@ -9,7 +9,6 @@ import { decrypt } from './crypto.js'
 import { log } from './logger.js'
 
 const MAX_HISTORY = 20
-const PER_MESSAGE_BUDGET = 0.10
 
 interface ConversationEntry {
   role: 'user' | 'assistant'
@@ -34,9 +33,12 @@ export function pushAnalysisContext(userId: number, analysisSummary: string): vo
   recentAnalyses.set(userId, list)
 }
 
-export async function handleChatMessage(userId: number, message: string): Promise<ChatMessage | null> {
+export async function handleChatMessage(userId: number, message: string): Promise<ChatMessage> {
+  log.info(`Chat: user ${userId} sent message (${message.length} chars)`)
+
   const { allowed, remaining } = checkBudget(userId)
   if (!allowed) {
+    log.info(`Chat: user ${userId} budget exhausted ($${remaining.toFixed(2)} remaining)`)
     return {
       id: randomUUID(),
       role: 'assistant',
@@ -47,11 +49,12 @@ export async function handleChatMessage(userId: number, message: string): Promis
   }
 
   const agentCfg = getAgentConfig(userId)
-  if (!agentCfg || agentCfg.provider !== 'claude-sdk' || !agentCfg.encrypted_api_key) {
+  if (!agentCfg?.encrypted_api_key) {
+    log.info(`Chat: user ${userId} has no API key configured`)
     return {
       id: randomUUID(),
       role: 'assistant',
-      content: 'No Claude API key configured. Go to Settings to set up your agent.',
+      content: 'No Claude API key configured. Go to Settings → Agent Configuration to set up your API key.',
       timestamp: new Date().toISOString(),
       costUsd: 0,
     }
@@ -62,42 +65,40 @@ export async function handleChatMessage(userId: number, message: string): Promis
   if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY)
   conversations.set(userId, history)
 
-  const systemPrompt = buildChatSystemPrompt(userId)
-  const conversationText = history
-    .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`)
-    .join('\n\n')
-
-  const fullPrompt = `${systemPrompt}\n\n---\n\nConversation:\n${conversationText}\n\nAssistant:`
-
   try {
     const apiKey = decrypt(agentCfg.encrypted_api_key)
-    const { invokeClaudeSDK } = await import('@tastytrade-monitor/claude-agent')
-    const response = await invokeClaudeSDK(fullPrompt, {
+    const systemPrompt = buildChatSystemPrompt(userId)
+
+    const { chatDirect } = await import('@tastytrade-monitor/claude-agent/invoke-direct')
+    const result = await chatDirect(history, {
       apiKey,
       model: agentCfg.model,
-      maxBudgetUsd: PER_MESSAGE_BUDGET,
+      systemPrompt,
     })
 
-    const costEstimate = estimateCost(fullPrompt, response, agentCfg.model)
-    trackUsage(userId, 'chat', costEstimate, Math.ceil(fullPrompt.length / 4), Math.ceil(response.length / 4))
+    const costEstimate = estimateCost(result.inputTokens, result.outputTokens, agentCfg.model)
+    trackUsage(userId, 'chat', costEstimate, result.inputTokens, result.outputTokens)
 
-    history.push({ role: 'assistant', content: response })
+    history.push({ role: 'assistant', content: result.text })
     if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY)
     conversations.set(userId, history)
+
+    log.info(`Chat: user ${userId} response (${result.outputTokens} tokens, $${costEstimate.toFixed(4)})`)
 
     return {
       id: randomUUID(),
       role: 'assistant',
-      content: response,
+      content: result.text,
       timestamp: new Date().toISOString(),
       costUsd: costEstimate,
     }
   } catch (err) {
-    log.error(`Chat failed for user ${userId}: ${(err as Error).message}`)
+    const errMsg = (err as Error).message
+    log.error(`Chat failed for user ${userId}: ${errMsg}`)
     return {
       id: randomUUID(),
       role: 'assistant',
-      content: `Error: ${(err as Error).message}`,
+      content: `Error: ${errMsg}`,
       timestamp: new Date().toISOString(),
       costUsd: 0,
     }
@@ -106,6 +107,7 @@ export async function handleChatMessage(userId: number, message: string): Promis
 
 export function clearChatHistory(userId: number): void {
   conversations.delete(userId)
+  log.info(`Chat: cleared history for user ${userId}`)
 }
 
 export function getChatHistory(userId: number): ChatMessage[] {
@@ -161,10 +163,7 @@ function buildChatSystemPrompt(userId: number): string {
   return sections.join('\n')
 }
 
-function estimateCost(prompt: string, response: string, model: string): number {
-  const tokensIn = Math.ceil(prompt.length / 4)
-  const tokensOut = Math.ceil(response.length / 4)
-
+function estimateCost(inputTokens: number, outputTokens: number, model: string): number {
   let inputRate = 3.0 / 1_000_000
   let outputRate = 15.0 / 1_000_000
   if (model.includes('haiku')) {
@@ -175,5 +174,5 @@ function estimateCost(prompt: string, response: string, model: string): number {
     outputRate = 75.0 / 1_000_000
   }
 
-  return tokensIn * inputRate + tokensOut * outputRate
+  return inputTokens * inputRate + outputTokens * outputRate
 }
