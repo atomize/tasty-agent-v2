@@ -53,7 +53,9 @@ export function App() {
     paperAccount, paperPositions, paperOrders,
     requestChain, sendRaw, login, register, logout,
     saveAgentConfig, requestAgentConfig, sendTestAlert,
-    requestWatchlist, saveWatchlist, deleteWatchlistItem, syncTastytradeWatchlists,
+    requestWatchlist, saveWatchlist, deleteWatchlistItem,
+    createWatchlist, deleteWatchlist, renameWatchlist,
+    syncTastytradeWatchlists,
     searchSymbols, sendChatMessage, clearChat,
     saveScheduleConfig, requestScheduleConfig, requestBudgetStatus,
     requestReports, runAnalysisNow,
@@ -153,6 +155,9 @@ export function App() {
             onRequestWatchlist={requestWatchlist}
             onSave={saveWatchlist}
             onDelete={deleteWatchlistItem}
+            onCreate={createWatchlist}
+            onDeleteWatchlist={deleteWatchlist}
+            onRenameWatchlist={renameWatchlist}
             onSync={syncTastytradeWatchlists}
             onSearch={searchSymbols}
           />
