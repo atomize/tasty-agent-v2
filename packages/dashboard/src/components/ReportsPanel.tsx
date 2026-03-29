@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
-import type { AnalysisReport, BudgetStatus } from '@tastytrade-monitor/shared'
+import { useState, useEffect, useRef } from 'react'
+import type { AnalysisReport, BudgetStatus, AgentStatus } from '@tastytrade-monitor/shared'
 
 interface Props {
   reports: AnalysisReport[]
   budgetStatus: BudgetStatus | null
+  agentStatus: AgentStatus | null
   onRequestReports: (date?: string) => void
   onRunNow: () => void
   onRequestBudget: () => void
@@ -18,20 +19,30 @@ const RUN_TYPE_LABELS: Record<string, { label: string; color: string }> = {
   manual: { label: 'Manual', color: 'text-gray-400 bg-gray-800' },
 }
 
-export function ReportsPanel({ reports, budgetStatus, onRequestReports, onRunNow, onRequestBudget }: Props) {
+export function ReportsPanel({ reports, budgetStatus, agentStatus, onRequestReports, onRunNow, onRequestBudget }: Props) {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [running, setRunning] = useState(false)
+  const [runRequested, setRunRequested] = useState(false)
+  const prevReportCount = useRef(reports.length)
+
+  const isProcessing = agentStatus?.state === 'processing'
+  const running = runRequested || isProcessing
 
   useEffect(() => {
     onRequestReports(selectedDate)
     onRequestBudget()
   }, [selectedDate, onRequestReports, onRequestBudget])
 
+  useEffect(() => {
+    if (reports.length > prevReportCount.current && runRequested) {
+      setRunRequested(false)
+    }
+    prevReportCount.current = reports.length
+  }, [reports.length, runRequested])
+
   const handleRunNow = () => {
-    setRunning(true)
+    setRunRequested(true)
     onRunNow()
-    setTimeout(() => setRunning(false), 10000)
   }
 
   return (
@@ -59,6 +70,29 @@ export function ReportsPanel({ reports, budgetStatus, onRequestReports, onRunNow
           </button>
         </div>
       </div>
+
+      {/* Agent progress banner */}
+      {running && (
+        <div className="border border-amber-800/50 bg-amber-900/20 rounded-lg px-4 py-3 flex items-center gap-3">
+          <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+          <div className="flex-1">
+            <span className="text-amber-400 text-sm font-mono">
+              {isProcessing && agentStatus?.currentTicker
+                ? `Analyzing ${agentStatus.currentTicker}...`
+                : 'Agent processing...'}
+            </span>
+            {agentStatus && (
+              <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-gray-500">
+                <span>Model: {agentStatus.model}</span>
+                {(agentStatus.queueDepth ?? 0) > 0 && <span>Queue: {agentStatus.queueDepth}</span>}
+              </div>
+            )}
+          </div>
+          <div className="w-24 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div className="h-full bg-amber-400 rounded-full animate-pulse" style={{ width: '60%' }} />
+          </div>
+        </div>
+      )}
 
       {/* Budget bar */}
       {budgetStatus && (

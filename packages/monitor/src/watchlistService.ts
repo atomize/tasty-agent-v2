@@ -5,13 +5,16 @@ import { log } from './logger.js'
 import {
   getUserWatchlists,
   getOrCreateDefaultWatchlist,
+  getOrCreateWatchlist,
   getWatchlistItems,
   replaceWatchlistItems,
   deleteWatchlistItem,
+  deleteWatchlistByName,
+  renameWatchlist as dbRenameWatchlist,
   getAllUserTickers,
   type WatchlistItemRow,
 } from './db.js'
-import { WATCHLIST } from './watchlist.config.js'
+import { WATCHLIST, SEED_WATCHLISTS } from './watchlist.config.js'
 
 export function getUserWatchlistsWithItems(userId: number): Watchlist[] {
   const lists = getUserWatchlists(userId)
@@ -29,13 +32,13 @@ export function getUserWatchlistsWithItems(userId: number): Watchlist[] {
 }
 
 export function saveWatchlist(userId: number, name: string, items: WatchlistItem[]): Watchlist {
-  const wl = getOrCreateDefaultWatchlist(userId)
-  const dbName = name || wl.name
+  const wl = getOrCreateWatchlist(userId, name || 'Default')
 
   replaceWatchlistItems(
     wl.id,
     items.map((item, idx) => ({
       ticker: item.ticker.toUpperCase(),
+      description: item.description,
       layer: item.layer,
       strategies: JSON.stringify(item.strategies),
       thesis: item.thesis,
@@ -46,9 +49,26 @@ export function saveWatchlist(userId: number, name: string, items: WatchlistItem
 
   return {
     id: wl.id,
-    name: dbName,
+    name: wl.name,
     items: getWatchlistItems(wl.id).map(rowToItem),
   }
+}
+
+export function createWatchlist(userId: number, name: string): Watchlist {
+  const wl = getOrCreateWatchlist(userId, name)
+  return {
+    id: wl.id,
+    name: wl.name,
+    items: getWatchlistItems(wl.id).map(rowToItem),
+  }
+}
+
+export function deleteWatchlist(userId: number, name: string): void {
+  deleteWatchlistByName(userId, name)
+}
+
+export function renameWatchlist(userId: number, oldName: string, newName: string): void {
+  dbRenameWatchlist(userId, oldName, newName)
 }
 
 export function removeWatchlistItem(userId: number, watchlistName: string, ticker: string): void {
@@ -138,19 +158,24 @@ export async function searchSymbols(query: string): Promise<{ ticker: string; de
 }
 
 function seedDefaultWatchlist(userId: number): void {
-  const wl = getOrCreateDefaultWatchlist(userId)
-  replaceWatchlistItems(
-    wl.id,
-    WATCHLIST.map((entry, idx) => ({
-      ticker: entry.ticker,
-      layer: entry.layer,
-      strategies: JSON.stringify(entry.strategies),
-      thesis: entry.thesis,
-      instrumentType: entry.instrumentType,
-      sortOrder: idx,
-    })),
-  )
-  log.info(`Seeded default watchlist for user ${userId} with ${WATCHLIST.length} items`)
+  let totalItems = 0
+  for (const sector of SEED_WATCHLISTS) {
+    const wl = getOrCreateWatchlist(userId, sector.name)
+    replaceWatchlistItems(
+      wl.id,
+      sector.entries.map((entry, idx) => ({
+        ticker: entry.ticker,
+        description: entry.description,
+        layer: entry.layer,
+        strategies: JSON.stringify(entry.strategies),
+        thesis: entry.thesis,
+        instrumentType: entry.instrumentType,
+        sortOrder: idx,
+      })),
+    )
+    totalItems += sector.entries.length
+  }
+  log.info(`Seeded ${SEED_WATCHLISTS.length} sector watchlists for user ${userId} with ${totalItems} total items`)
 }
 
 function rowToItem(row: WatchlistItemRow): WatchlistItem {
@@ -158,6 +183,7 @@ function rowToItem(row: WatchlistItemRow): WatchlistItem {
   try { strategies = JSON.parse(row.strategies) } catch { /* empty */ }
   return {
     ticker: row.ticker,
+    description: row.description || undefined,
     layer: row.layer,
     strategies,
     thesis: row.thesis,

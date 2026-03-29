@@ -28,7 +28,8 @@ export function WatchlistTable({ snapshots, alerts }: Props) {
 
   const filtered = snapshots.filter(s =>
     !filter || s.ticker.toLowerCase().includes(filter.toLowerCase()) ||
-    (s.layer?.toLowerCase().includes(filter.toLowerCase()) ?? false)
+    (s.layer?.toLowerCase().includes(filter.toLowerCase()) ?? false) ||
+    (s.description?.toLowerCase().includes(filter.toLowerCase()) ?? false)
   )
 
   const sorted = [...filtered].sort((a, b) => {
@@ -77,6 +78,7 @@ export function WatchlistTable({ snapshots, alerts }: Props) {
           <thead>
             <tr>
               <SortHeader k="ticker" label="Ticker" />
+              <th className="text-left">Name</th>
               <SortHeader k="layer" label="Layer" />
               <SortHeader k="price" label="Price" />
               <th className="text-left">Bid</th>
@@ -114,6 +116,7 @@ export function WatchlistTable({ snapshots, alerts }: Props) {
                       </span>
                     )}
                   </td>
+                  <td className="text-gray-500 text-[11px] max-w-[140px] truncate" title={s.description}>{s.description ?? ''}</td>
                   <td className="text-gray-500 text-[11px] max-w-[160px] truncate">{s.layer ?? '-'}</td>
                   <td>{fmtPrice(s.price)}</td>
                   <td className="text-gray-500">{fmtPrice(s.bid)}</td>

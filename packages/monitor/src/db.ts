@@ -78,6 +78,7 @@ function migrateV2Tables(db: Database.Database): void {
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       watchlist_id    INTEGER NOT NULL REFERENCES watchlists(id) ON DELETE CASCADE,
       ticker          TEXT NOT NULL,
+      description     TEXT NOT NULL DEFAULT '',
       layer           TEXT,
       strategies      TEXT NOT NULL DEFAULT '[]',
       thesis          TEXT NOT NULL DEFAULT '',
@@ -161,6 +162,12 @@ function migrateV2Tables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_analyses_log_user
       ON analyses_log(user_id, created_at);
   `)
+
+  const wiCols = db.pragma('table_info(watchlist_items)') as { name: string }[]
+  if (!wiCols.some(c => c.name === 'description')) {
+    db.exec("ALTER TABLE watchlist_items ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    log.info('Migrated watchlist_items: added description column')
+  }
 }
 
 // ─── Interfaces ──────────────────────────────────────────────────
@@ -280,6 +287,7 @@ export interface WatchlistItemRow {
   id: number
   watchlist_id: number
   ticker: string
+  description: string
   layer: string | null
   strategies: string
   thesis: string
@@ -302,6 +310,27 @@ export function getOrCreateDefaultWatchlist(userId: number): WatchlistRow {
   ).get(userId) as WatchlistRow
 }
 
+export function getOrCreateWatchlist(userId: number, name: string): WatchlistRow {
+  const existing = getDb().prepare(
+    'SELECT * FROM watchlists WHERE user_id = ? AND name = ?'
+  ).get(userId, name) as WatchlistRow | undefined
+  if (existing) return existing
+
+  return getDb().prepare(
+    'INSERT INTO watchlists (user_id, name) VALUES (?, ?) RETURNING *'
+  ).get(userId, name) as WatchlistRow
+}
+
+export function deleteWatchlistByName(userId: number, name: string): void {
+  getDb().prepare('DELETE FROM watchlists WHERE user_id = ? AND name = ?').run(userId, name)
+}
+
+export function renameWatchlist(userId: number, oldName: string, newName: string): void {
+  getDb().prepare(
+    'UPDATE watchlists SET name = ? WHERE user_id = ? AND name = ?'
+  ).run(newName, userId, oldName)
+}
+
 export function getWatchlistItems(watchlistId: number): WatchlistItemRow[] {
   return getDb().prepare(
     'SELECT * FROM watchlist_items WHERE watchlist_id = ? ORDER BY sort_order, ticker'
@@ -311,6 +340,7 @@ export function getWatchlistItems(watchlistId: number): WatchlistItemRow[] {
 export function upsertWatchlistItem(
   watchlistId: number,
   ticker: string,
+  description: string,
   layer: string | null,
   strategies: string,
   thesis: string,
@@ -318,16 +348,17 @@ export function upsertWatchlistItem(
   sortOrder: number,
 ): WatchlistItemRow {
   return getDb().prepare(`
-    INSERT INTO watchlist_items (watchlist_id, ticker, layer, strategies, thesis, instrument_type, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO watchlist_items (watchlist_id, ticker, description, layer, strategies, thesis, instrument_type, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(watchlist_id, ticker) DO UPDATE SET
+      description = excluded.description,
       layer = excluded.layer,
       strategies = excluded.strategies,
       thesis = excluded.thesis,
       instrument_type = excluded.instrument_type,
       sort_order = excluded.sort_order
     RETURNING *
-  `).get(watchlistId, ticker, layer, strategies, thesis, instrumentType, sortOrder) as WatchlistItemRow
+  `).get(watchlistId, ticker, description, layer, strategies, thesis, instrumentType, sortOrder) as WatchlistItemRow
 }
 
 export function deleteWatchlistItem(watchlistId: number, ticker: string): void {
@@ -336,16 +367,16 @@ export function deleteWatchlistItem(watchlistId: number, ticker: string): void {
 
 export function replaceWatchlistItems(
   watchlistId: number,
-  items: { ticker: string; layer: string | null; strategies: string; thesis: string; instrumentType: string; sortOrder: number }[],
+  items: { ticker: string; description?: string; layer: string | null; strategies: string; thesis: string; instrumentType: string; sortOrder: number }[],
 ): void {
   const tx = getDb().transaction(() => {
     getDb().prepare('DELETE FROM watchlist_items WHERE watchlist_id = ?').run(watchlistId)
     const insert = getDb().prepare(`
-      INSERT INTO watchlist_items (watchlist_id, ticker, layer, strategies, thesis, instrument_type, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO watchlist_items (watchlist_id, ticker, description, layer, strategies, thesis, instrument_type, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const item of items) {
-      insert.run(watchlistId, item.ticker, item.layer, item.strategies, item.thesis, item.instrumentType, item.sortOrder)
+      insert.run(watchlistId, item.ticker, item.description ?? '', item.layer, item.strategies, item.thesis, item.instrumentType, item.sortOrder)
     }
   })
   tx()

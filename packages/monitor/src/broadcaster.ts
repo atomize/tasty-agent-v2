@@ -20,7 +20,7 @@ import {
 } from './db.js'
 import type { JwtPayload } from './auth.js'
 import { handleOAuthRoute, getEnabledOAuthProviders } from './oauth.js'
-import { getUserWatchlistsWithItems, saveWatchlist, removeWatchlistItem, syncFromTastytrade, searchSymbols } from './watchlistService.js'
+import { getUserWatchlistsWithItems, saveWatchlist, removeWatchlistItem, syncFromTastytrade, searchSymbols, createWatchlist, deleteWatchlist, renameWatchlist } from './watchlistService.js'
 import { getBudgetStatus } from './budgetTracker.js'
 import { handleChatMessage, clearChatHistory } from './chatHandler.js'
 import { runScheduledAnalysis } from './scheduledAnalysis.js'
@@ -433,6 +433,7 @@ function handleSaveWatchlist(ws: WebSocket, data: Record<string, unknown>): void
     const items = (data.items ?? []) as Array<Record<string, unknown>>
     saveWatchlist(auth.userId, name, items.map((item, idx) => ({
       ticker: String(item.ticker ?? ''),
+      description: item.description != null ? String(item.description) : undefined,
       layer: item.layer != null ? String(item.layer) : null,
       strategies: Array.isArray(item.strategies) ? item.strategies.map(String) : [],
       thesis: String(item.thesis ?? ''),
@@ -451,6 +452,37 @@ function handleDeleteWatchlistItem(ws: WebSocket, data: Record<string, unknown>)
   if (!auth) return
   removeWatchlistItem(auth.userId, String(data.watchlistName ?? 'Default'), String(data.ticker ?? ''))
   handleRequestWatchlist(ws)
+}
+
+function handleCreateWatchlist(ws: WebSocket, data: Record<string, unknown>): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  const name = String(data.name ?? '')
+  if (!name) return
+  createWatchlist(auth.userId, name)
+  handleRequestWatchlist(ws)
+  log.info(`Watchlist "${name}" created for ${auth.email}`)
+}
+
+function handleDeleteWatchlist(ws: WebSocket, data: Record<string, unknown>): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  const name = String(data.name ?? '')
+  if (!name) return
+  deleteWatchlist(auth.userId, name)
+  handleRequestWatchlist(ws)
+  log.info(`Watchlist "${name}" deleted for ${auth.email}`)
+}
+
+function handleRenameWatchlist(ws: WebSocket, data: Record<string, unknown>): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+  const oldName = String(data.oldName ?? '')
+  const newName = String(data.newName ?? '')
+  if (!oldName || !newName) return
+  renameWatchlist(auth.userId, oldName, newName)
+  handleRequestWatchlist(ws)
+  log.info(`Watchlist renamed "${oldName}" → "${newName}" for ${auth.email}`)
 }
 
 async function handleSyncTastytradeWatchlists(ws: WebSocket): Promise<void> {
@@ -764,6 +796,27 @@ const authenticatedWsRoutes: Record<string, AuthenticatedWsRoute> = {
     const data = msg.data
     if (data && typeof data === 'object' && !Array.isArray(data)) {
       handleDeleteWatchlistItem(ws, data as Record<string, unknown>)
+    }
+  },
+
+  create_watchlist(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      handleCreateWatchlist(ws, data as Record<string, unknown>)
+    }
+  },
+
+  delete_watchlist(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      handleDeleteWatchlist(ws, data as Record<string, unknown>)
+    }
+  },
+
+  rename_watchlist(ws, msg) {
+    const data = msg.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      handleRenameWatchlist(ws, data as Record<string, unknown>)
     }
   },
 
