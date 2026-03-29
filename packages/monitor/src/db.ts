@@ -127,6 +127,39 @@ function migrateV2Tables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_analysis_reports_user
       ON analysis_reports(user_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS chat_history (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role       TEXT NOT NULL CHECK(role IN ('user','assistant')),
+      content    TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chat_history_user
+      ON chat_history(user_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS alerts_log (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      alert_id   TEXT NOT NULL,
+      payload    TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_alerts_log_user
+      ON alerts_log(user_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS analyses_log (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      analysis_id TEXT NOT NULL,
+      payload    TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_analyses_log_user
+      ON analyses_log(user_id, created_at);
   `)
 }
 
@@ -462,4 +495,78 @@ export function getLatestReport(userId: number): AnalysisReportRow | undefined {
   return getDb().prepare(
     'SELECT * FROM analysis_reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
   ).get(userId) as AnalysisReportRow | undefined
+}
+
+// ─── Chat History ─────────────────────────────────────────────────
+
+export interface ChatHistoryRow {
+  id: number
+  user_id: number
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+}
+
+export function appendChatMessage(userId: number, role: 'user' | 'assistant', content: string): ChatHistoryRow {
+  return getDb().prepare(
+    "INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?) RETURNING *"
+  ).get(userId, role, content) as ChatHistoryRow
+}
+
+export function getChatHistory(userId: number, limit = 50): ChatHistoryRow[] {
+  return getDb().prepare(
+    'SELECT * FROM (SELECT * FROM chat_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC'
+  ).all(userId, limit) as ChatHistoryRow[]
+}
+
+export function clearChatHistoryDb(userId: number): void {
+  getDb().prepare('DELETE FROM chat_history WHERE user_id = ?').run(userId)
+}
+
+// ─── Alerts Log ───────────────────────────────────────────────────
+
+export function appendAlertLog(userId: number, alertId: string, payload: string): void {
+  getDb().prepare(
+    "INSERT INTO alerts_log (user_id, alert_id, payload) VALUES (?, ?, ?)"
+  ).run(userId, alertId, payload)
+}
+
+export function getRecentAlerts(userId: number, limit = 200): string[] {
+  const rows = getDb().prepare(
+    'SELECT payload FROM alerts_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
+  ).all(userId, limit) as { payload: string }[]
+  return rows.reverse().map(r => r.payload)
+}
+
+export function appendAlertLogForAllUsers(alertId: string, payload: string): void {
+  const users = getDb().prepare('SELECT id FROM users').all() as { id: number }[]
+  const stmt = getDb().prepare("INSERT INTO alerts_log (user_id, alert_id, payload) VALUES (?, ?, ?)")
+  const tx = getDb().transaction(() => {
+    for (const u of users) stmt.run(u.id, alertId, payload)
+  })
+  tx()
+}
+
+// ─── Analyses Log ─────────────────────────────────────────────────
+
+export function appendAnalysisLog(userId: number, analysisId: string, payload: string): void {
+  getDb().prepare(
+    "INSERT INTO analyses_log (user_id, analysis_id, payload) VALUES (?, ?, ?)"
+  ).run(userId, analysisId, payload)
+}
+
+export function getRecentAnalyses(userId: number, limit = 50): string[] {
+  const rows = getDb().prepare(
+    'SELECT payload FROM analyses_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
+  ).all(userId, limit) as { payload: string }[]
+  return rows.reverse().map(r => r.payload)
+}
+
+export function appendAnalysisLogForAllUsers(analysisId: string, payload: string): void {
+  const users = getDb().prepare('SELECT id FROM users').all() as { id: number }[]
+  const stmt = getDb().prepare("INSERT INTO analyses_log (user_id, analysis_id, payload) VALUES (?, ?, ?)")
+  const tx = getDb().transaction(() => {
+    for (const u of users) stmt.run(u.id, analysisId, payload)
+  })
+  tx()
 }
