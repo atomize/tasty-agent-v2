@@ -201,6 +201,7 @@ export type WsServerAgentConfig = z.infer<typeof WsServerAgentConfigSchema>
 
 export const WatchlistItemSchema = z.object({
   ticker: z.string(),
+  description: z.string().optional(),
   layer: z.string().nullable(),
   strategies: z.array(z.string()),
   thesis: z.string(),
@@ -451,6 +452,18 @@ export const WsClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('delete_watchlist_item'),
     data: z.object({ watchlistName: z.string(), ticker: z.string() }),
+  }),
+  z.object({
+    type: z.literal('create_watchlist'),
+    data: z.object({ name: z.string() }),
+  }),
+  z.object({
+    type: z.literal('delete_watchlist'),
+    data: z.object({ name: z.string() }),
+  }),
+  z.object({
+    type: z.literal('rename_watchlist'),
+    data: z.object({ oldName: z.string(), newName: z.string() }),
   }),
   z.object({
     type: z.literal('chat_send'),
