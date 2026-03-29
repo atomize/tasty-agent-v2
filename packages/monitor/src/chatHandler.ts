@@ -4,8 +4,8 @@ import { getAllSnapshots } from './state.js'
 import { getAccountContext } from './account.js'
 import { getUserWatchlistsWithItems } from './watchlistService.js'
 import { checkBudget, trackUsage } from './budgetTracker.js'
-import { getAgentConfig } from './db.js'
-import { decrypt } from './crypto.js'
+import { getAgentConfig, appendChatMessage, getChatHistory as getChatHistoryDb, clearChatHistoryDb } from './db.js'
+import { decrypt, isEncryptionEnabled } from './crypto.js'
 import { log } from './logger.js'
 
 const MAX_HISTORY = 20
@@ -60,10 +60,19 @@ export async function handleChatMessage(userId: number, message: string): Promis
     }
   }
 
-  const history = conversations.get(userId) ?? []
+  let history = conversations.get(userId)
+  if (!history && isEncryptionEnabled()) {
+    const rows = getChatHistoryDb(userId)
+    history = rows.map(r => ({ role: r.role, content: r.content }))
+  }
+  if (!history) history = []
   history.push({ role: 'user', content: message })
   if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY)
   conversations.set(userId, history)
+
+  if (isEncryptionEnabled()) {
+    try { appendChatMessage(userId, 'user', message) } catch { /* best-effort */ }
+  }
 
   try {
     const apiKey = decrypt(agentCfg.encrypted_api_key)
@@ -83,6 +92,10 @@ export async function handleChatMessage(userId: number, message: string): Promis
     if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY)
     conversations.set(userId, history)
 
+    if (isEncryptionEnabled()) {
+      try { appendChatMessage(userId, 'assistant', result.text) } catch { /* best-effort */ }
+    }
+
     log.info(`Chat: user ${userId} response (${result.outputTokens} tokens, $${costEstimate.toFixed(4)})`)
 
     return {
@@ -95,10 +108,14 @@ export async function handleChatMessage(userId: number, message: string): Promis
   } catch (err) {
     const errMsg = (err as Error).message
     log.error(`Chat failed for user ${userId}: ${errMsg}`)
+    const errorMsg = `Error: ${errMsg}`
+    if (isEncryptionEnabled()) {
+      try { appendChatMessage(userId, 'assistant', errorMsg) } catch { /* best-effort */ }
+    }
     return {
       id: randomUUID(),
       role: 'assistant',
-      content: `Error: ${errMsg}`,
+      content: errorMsg,
       timestamp: new Date().toISOString(),
       costUsd: 0,
     }
@@ -107,10 +124,25 @@ export async function handleChatMessage(userId: number, message: string): Promis
 
 export function clearChatHistory(userId: number): void {
   conversations.delete(userId)
+  if (isEncryptionEnabled()) {
+    try { clearChatHistoryDb(userId) } catch { /* best-effort */ }
+  }
   log.info(`Chat: cleared history for user ${userId}`)
 }
 
-export function getChatHistory(userId: number): ChatMessage[] {
+export function getChatHistoryForUser(userId: number): ChatMessage[] {
+  if (isEncryptionEnabled()) {
+    const rows = getChatHistoryDb(userId)
+    if (rows.length > 0 && !conversations.has(userId)) {
+      conversations.set(userId, rows.map(r => ({ role: r.role, content: r.content })))
+    }
+    return rows.map(r => ({
+      id: `db-${r.id}`,
+      role: r.role,
+      content: r.content,
+      timestamp: r.created_at,
+    }))
+  }
   const history = conversations.get(userId) ?? []
   return history.map((h, i) => ({
     id: `hist-${i}`,

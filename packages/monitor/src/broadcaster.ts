@@ -13,7 +13,11 @@ import { config } from './config.js'
 import { log } from './logger.js'
 import { isEncryptionEnabled, encrypt, maskApiKey } from './crypto.js'
 import { login, register, verifyToken } from './auth.js'
-import { getAgentConfig, upsertAgentConfig, findUserById, upsertScheduleConfig, getScheduleConfig, getReportsForDate } from './db.js'
+import {
+  getAgentConfig, upsertAgentConfig, findUserById, upsertScheduleConfig, getScheduleConfig, getReportsForDate,
+  appendAlertLogForAllUsers, getRecentAlerts, appendAnalysisLogForAllUsers, getRecentAnalyses,
+  getChatHistory,
+} from './db.js'
 import type { JwtPayload } from './auth.js'
 import { handleOAuthRoute, getEnabledOAuthProviders } from './oauth.js'
 import { getUserWatchlistsWithItems, saveWatchlist, removeWatchlistItem, syncFromTastytrade, searchSymbols } from './watchlistService.js'
@@ -54,7 +58,16 @@ export function onAlertForOrchestrator(handler: OrchestratorHandler): void {
 export function broadcastToAll(msg: WsMessage | Record<string, unknown>): void {
   const typed = msg as Record<string, unknown>
   if (typed.type === 'agent_analysis' && typed.data) {
-    pushAnalysis(typed.data as AgentAnalysis)
+    const analysis = typed.data as AgentAnalysis
+    pushAnalysis(analysis)
+    if (isMultiTenant()) {
+      try {
+        const analysisId = (analysis as Record<string, unknown>).id as string ?? `analysis-${Date.now()}`
+        appendAnalysisLogForAllUsers(analysisId, JSON.stringify(analysis))
+      } catch (err) {
+        log.warn(`Failed to persist analysis: ${(err as Error).message}`)
+      }
+    }
   }
   if (typed.type === 'agent_status' && typed.data) {
     agentStatus = typed.data as AgentStatus
@@ -189,6 +202,14 @@ export function startBroadcaster(): void {
   onAlert((alert: OptionsAlert) => {
     pushAlert(alert)
     broadcast({ type: 'alert', data: alert })
+    if (isMultiTenant()) {
+      try {
+        const alertId = (alert as Record<string, unknown>).id as string ?? `alert-${Date.now()}`
+        appendAlertLogForAllUsers(alertId, JSON.stringify(alert))
+      } catch (err) {
+        log.warn(`Failed to persist alert: ${(err as Error).message}`)
+      }
+    }
     if (orchestratorHandler) {
       Promise.resolve(orchestratorHandler(alert)).catch(err => {
         log.error('Orchestrator dispatch error:', err)
@@ -255,9 +276,52 @@ function send(ws: WebSocket, msg: WsMessage | Record<string, unknown>): void {
 function sendFullState(ws: WebSocket): void {
   send(ws, { type: 'snapshot', data: getAllSnapshots() })
   send(ws, { type: 'account', data: getAccountContext() })
-  if (recentAlerts.length > 0) send(ws, { type: 'alert_history', data: recentAlerts })
-  if (recentAnalyses.length > 0) send(ws, { type: 'analysis_history', data: recentAnalyses })
   if (agentStatus) send(ws, { type: 'agent_status', data: agentStatus })
+
+  if (isMultiTenant()) {
+    sendPerUserState(ws)
+  } else {
+    if (recentAlerts.length > 0) send(ws, { type: 'alert_history', data: recentAlerts })
+    if (recentAnalyses.length > 0) send(ws, { type: 'analysis_history', data: recentAnalyses })
+  }
+}
+
+function sendPerUserState(ws: WebSocket): void {
+  const auth = clientAuth.get(ws)
+  if (!auth) return
+
+  try {
+    const alertPayloads = getRecentAlerts(auth.userId)
+    if (alertPayloads.length > 0) {
+      const alerts = alertPayloads.map(p => JSON.parse(p))
+      send(ws, { type: 'alert_history', data: alerts })
+    }
+
+    const analysisPayloads = getRecentAnalyses(auth.userId)
+    if (analysisPayloads.length > 0) {
+      const analyses = analysisPayloads.map(p => JSON.parse(p))
+      send(ws, { type: 'analysis_history', data: analyses })
+    }
+
+    const chatRows = getChatHistory(auth.userId)
+    if (chatRows.length > 0) {
+      const messages = chatRows.map(r => ({
+        id: `db-${r.id}`,
+        role: r.role,
+        content: r.content,
+        timestamp: r.created_at,
+      }))
+      send(ws, { type: 'chat_history', data: messages })
+    }
+
+    handleRequestAgentConfig(ws)
+    handleRequestWatchlist(ws)
+    handleRequestScheduleConfig(ws)
+    handleRequestBudgetStatus(ws)
+    handleRequestReports(ws, undefined)
+  } catch (err) {
+    log.warn(`Failed to send per-user state for ${auth.email}: ${(err as Error).message}`)
+  }
 }
 
 async function handleAuth(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {
@@ -643,7 +707,16 @@ const authenticatedWsRoutes: Record<string, AuthenticatedWsRoute> = {
     if (!data || typeof data !== 'object') return
     const d = data as Record<string, unknown>
     log.info(`Agent analysis received for ${d.ticker ?? 'unknown'} (model: ${d.model ?? 'unknown'})`)
-    pushAnalysis(data as unknown as AgentAnalysis)
+    const analysis = data as unknown as AgentAnalysis
+    pushAnalysis(analysis)
+    if (isMultiTenant()) {
+      try {
+        const analysisId = d.id as string ?? `analysis-${Date.now()}`
+        appendAnalysisLogForAllUsers(analysisId, JSON.stringify(analysis))
+      } catch (err) {
+        log.warn(`Failed to persist analysis: ${(err as Error).message}`)
+      }
+    }
     broadcastRaw(raw)
   },
 
@@ -654,6 +727,14 @@ const authenticatedWsRoutes: Record<string, AuthenticatedWsRoute> = {
     log.info(`Injected test alert for ${payload.trigger?.ticker ?? 'unknown'}`)
     pushAlert(payload)
     broadcast({ type: 'alert', data: payload })
+    if (isMultiTenant()) {
+      try {
+        const alertId = (data as Record<string, unknown>).id as string ?? `alert-${Date.now()}`
+        appendAlertLogForAllUsers(alertId, JSON.stringify(payload))
+      } catch (err) {
+        log.warn(`Failed to persist alert: ${(err as Error).message}`)
+      }
+    }
     if (orchestratorHandler) {
       Promise.resolve(orchestratorHandler(payload)).catch(err => {
         log.error('Orchestrator dispatch error:', err)
