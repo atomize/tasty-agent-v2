@@ -176,6 +176,7 @@ export function App() {
           <ReportsPanel
             reports={reports}
             budgetStatus={budgetStatus}
+            agentStatus={agentStatus}
             onRequestReports={requestReports}
             onRunNow={runAnalysisNow}
             onRequestBudget={requestBudgetStatus}
