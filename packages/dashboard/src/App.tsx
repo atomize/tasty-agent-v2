@@ -189,6 +189,7 @@ export function App() {
             onSave={saveAgentConfig}
             onRequest={requestAgentConfig}
             onTestAlert={sendTestAlert}
+            env={env}
             scheduleConfig={scheduleConfig}
             budgetStatus={budgetStatus}
             onSaveSchedule={saveScheduleConfig}

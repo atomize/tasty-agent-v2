@@ -6,6 +6,7 @@ interface AgentSettingsProps {
   onSave: (config: { provider: string; apiKey?: string; model?: string; maxBudgetUsd?: number; externalUrl?: string }) => void
   onRequest: () => void
   onTestAlert: (ticker: string) => void
+  env: 'sandbox' | 'production'
   scheduleConfig: ScheduleConfigResponse | null
   budgetStatus: BudgetStatus | null
   onSaveSchedule: (cfg: Partial<ScheduleConfig>) => void
@@ -19,7 +20,7 @@ const MODELS = [
   'claude-haiku-3-20250422',
 ]
 
-export function AgentSettings({ config, onSave, onRequest, onTestAlert, scheduleConfig, budgetStatus, onSaveSchedule, onRequestSchedule, onRequestBudget }: AgentSettingsProps) {
+export function AgentSettings({ config, onSave, onRequest, onTestAlert, env, scheduleConfig, budgetStatus, onSaveSchedule, onRequestSchedule, onRequestBudget }: AgentSettingsProps) {
   const [provider, setProvider] = useState<string>(config?.provider ?? 'none')
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState(config?.model ?? 'claude-sonnet-4-20250514')
@@ -214,7 +215,7 @@ export function AgentSettings({ config, onSave, onRequest, onTestAlert, schedule
           {saved ? 'Saved!' : 'Save Configuration'}
         </button>
 
-        {provider !== 'none' && (
+        {provider !== 'none' && env === 'sandbox' && (
           <button
             type="button"
             disabled={provider === 'claude-sdk' && !hasKey && !apiKey}
@@ -228,10 +229,10 @@ export function AgentSettings({ config, onSave, onRequest, onTestAlert, schedule
                 ? 'border-green-600 text-green-400 bg-green-900/20'
                 : provider === 'claude-sdk' && !hasKey && !apiKey
                   ? 'border-gray-800 text-gray-700 bg-transparent cursor-not-allowed'
-                  : 'border-gray-700 text-gray-400 hover:border-amber-500/50 hover:text-amber-400 bg-transparent'
+                  : 'border-amber-800/50 text-amber-400/70 hover:border-amber-500/50 hover:text-amber-400 bg-amber-900/10'
             }`}
           >
-            {testFired ? 'Alert Sent — check Analysis tab' : 'Fire Test Alert'}
+            {testFired ? 'Alert Sent — check Analysis tab' : 'TEST — Fire Synthetic Alert'}
           </button>
         )}
       </div>
