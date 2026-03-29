@@ -14,7 +14,7 @@ import {
   getAllUserTickers,
   type WatchlistItemRow,
 } from './db.js'
-import { WATCHLIST } from './watchlist.config.js'
+import { WATCHLIST, SEED_WATCHLISTS } from './watchlist.config.js'
 
 export function getUserWatchlistsWithItems(userId: number): Watchlist[] {
   const lists = getUserWatchlists(userId)
@@ -157,19 +157,23 @@ export async function searchSymbols(query: string): Promise<{ ticker: string; de
 }
 
 function seedDefaultWatchlist(userId: number): void {
-  const wl = getOrCreateDefaultWatchlist(userId)
-  replaceWatchlistItems(
-    wl.id,
-    WATCHLIST.map((entry, idx) => ({
-      ticker: entry.ticker,
-      layer: entry.layer,
-      strategies: JSON.stringify(entry.strategies),
-      thesis: entry.thesis,
-      instrumentType: entry.instrumentType,
-      sortOrder: idx,
-    })),
-  )
-  log.info(`Seeded default watchlist for user ${userId} with ${WATCHLIST.length} items`)
+  let totalItems = 0
+  for (const sector of SEED_WATCHLISTS) {
+    const wl = getOrCreateWatchlist(userId, sector.name)
+    replaceWatchlistItems(
+      wl.id,
+      sector.entries.map((entry, idx) => ({
+        ticker: entry.ticker,
+        layer: entry.layer,
+        strategies: JSON.stringify(entry.strategies),
+        thesis: entry.thesis,
+        instrumentType: entry.instrumentType,
+        sortOrder: idx,
+      })),
+    )
+    totalItems += sector.entries.length
+  }
+  log.info(`Seeded ${SEED_WATCHLISTS.length} sector watchlists for user ${userId} with ${totalItems} total items`)
 }
 
 function rowToItem(row: WatchlistItemRow): WatchlistItem {
