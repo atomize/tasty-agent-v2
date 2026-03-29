@@ -38,6 +38,7 @@ export function saveWatchlist(userId: number, name: string, items: WatchlistItem
     wl.id,
     items.map((item, idx) => ({
       ticker: item.ticker.toUpperCase(),
+      description: item.description,
       layer: item.layer,
       strategies: JSON.stringify(item.strategies),
       thesis: item.thesis,
@@ -164,6 +165,7 @@ function seedDefaultWatchlist(userId: number): void {
       wl.id,
       sector.entries.map((entry, idx) => ({
         ticker: entry.ticker,
+        description: entry.description,
         layer: entry.layer,
         strategies: JSON.stringify(entry.strategies),
         thesis: entry.thesis,
@@ -181,6 +183,7 @@ function rowToItem(row: WatchlistItemRow): WatchlistItem {
   try { strategies = JSON.parse(row.strategies) } catch { /* empty */ }
   return {
     ticker: row.ticker,
+    description: row.description || undefined,
     layer: row.layer,
     strategies,
     thesis: row.thesis,

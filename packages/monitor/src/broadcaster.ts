@@ -433,6 +433,7 @@ function handleSaveWatchlist(ws: WebSocket, data: Record<string, unknown>): void
     const items = (data.items ?? []) as Array<Record<string, unknown>>
     saveWatchlist(auth.userId, name, items.map((item, idx) => ({
       ticker: String(item.ticker ?? ''),
+      description: item.description != null ? String(item.description) : undefined,
       layer: item.layer != null ? String(item.layer) : null,
       strategies: Array.isArray(item.strategies) ? item.strategies.map(String) : [],
       thesis: String(item.thesis ?? ''),
