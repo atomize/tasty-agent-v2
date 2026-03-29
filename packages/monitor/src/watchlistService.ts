@@ -5,9 +5,12 @@ import { log } from './logger.js'
 import {
   getUserWatchlists,
   getOrCreateDefaultWatchlist,
+  getOrCreateWatchlist,
   getWatchlistItems,
   replaceWatchlistItems,
   deleteWatchlistItem,
+  deleteWatchlistByName,
+  renameWatchlist as dbRenameWatchlist,
   getAllUserTickers,
   type WatchlistItemRow,
 } from './db.js'
@@ -29,8 +32,7 @@ export function getUserWatchlistsWithItems(userId: number): Watchlist[] {
 }
 
 export function saveWatchlist(userId: number, name: string, items: WatchlistItem[]): Watchlist {
-  const wl = getOrCreateDefaultWatchlist(userId)
-  const dbName = name || wl.name
+  const wl = getOrCreateWatchlist(userId, name || 'Default')
 
   replaceWatchlistItems(
     wl.id,
@@ -46,9 +48,26 @@ export function saveWatchlist(userId: number, name: string, items: WatchlistItem
 
   return {
     id: wl.id,
-    name: dbName,
+    name: wl.name,
     items: getWatchlistItems(wl.id).map(rowToItem),
   }
+}
+
+export function createWatchlist(userId: number, name: string): Watchlist {
+  const wl = getOrCreateWatchlist(userId, name)
+  return {
+    id: wl.id,
+    name: wl.name,
+    items: getWatchlistItems(wl.id).map(rowToItem),
+  }
+}
+
+export function deleteWatchlist(userId: number, name: string): void {
+  deleteWatchlistByName(userId, name)
+}
+
+export function renameWatchlist(userId: number, oldName: string, newName: string): void {
+  dbRenameWatchlist(userId, oldName, newName)
 }
 
 export function removeWatchlistItem(userId: number, watchlistName: string, ticker: string): void {

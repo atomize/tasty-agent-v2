@@ -302,6 +302,27 @@ export function getOrCreateDefaultWatchlist(userId: number): WatchlistRow {
   ).get(userId) as WatchlistRow
 }
 
+export function getOrCreateWatchlist(userId: number, name: string): WatchlistRow {
+  const existing = getDb().prepare(
+    'SELECT * FROM watchlists WHERE user_id = ? AND name = ?'
+  ).get(userId, name) as WatchlistRow | undefined
+  if (existing) return existing
+
+  return getDb().prepare(
+    'INSERT INTO watchlists (user_id, name) VALUES (?, ?) RETURNING *'
+  ).get(userId, name) as WatchlistRow
+}
+
+export function deleteWatchlistByName(userId: number, name: string): void {
+  getDb().prepare('DELETE FROM watchlists WHERE user_id = ? AND name = ?').run(userId, name)
+}
+
+export function renameWatchlist(userId: number, oldName: string, newName: string): void {
+  getDb().prepare(
+    'UPDATE watchlists SET name = ? WHERE user_id = ? AND name = ?'
+  ).run(newName, userId, oldName)
+}
+
 export function getWatchlistItems(watchlistId: number): WatchlistItemRow[] {
   return getDb().prepare(
     'SELECT * FROM watchlist_items WHERE watchlist_id = ? ORDER BY sort_order, ticker'
