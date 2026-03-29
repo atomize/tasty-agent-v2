@@ -44,6 +44,9 @@ export interface MonitorState {
   requestWatchlist: () => void
   saveWatchlist: (name: string, items: WatchlistItem[]) => void
   deleteWatchlistItem: (watchlistName: string, ticker: string) => void
+  createWatchlist: (name: string) => void
+  deleteWatchlist: (name: string) => void
+  renameWatchlist: (oldName: string, newName: string) => void
   syncTastytradeWatchlists: () => void
   searchSymbols: (query: string) => void
   sendChatMessage: (message: string) => void
@@ -190,6 +193,24 @@ export function useMonitorSocket(): MonitorState {
   const deleteWatchlistItem = useCallback((watchlistName: string, ticker: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'delete_watchlist_item', data: { watchlistName, ticker } }))
+    }
+  }, [])
+
+  const createWatchlistFn = useCallback((name: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'create_watchlist', data: { name } }))
+    }
+  }, [])
+
+  const deleteWatchlistFn = useCallback((name: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'delete_watchlist', data: { name } }))
+    }
+  }, [])
+
+  const renameWatchlistFn = useCallback((oldName: string, newName: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'rename_watchlist', data: { oldName, newName } }))
     }
   }, [])
 
@@ -420,7 +441,9 @@ export function useMonitorSocket(): MonitorState {
     watchlists, chatMessages, scheduleConfig, budgetStatus, reports, searchResults,
     requestChain, sendRaw, login: loginFn, register: registerFn, logout,
     saveAgentConfig, requestAgentConfig, sendTestAlert,
-    requestWatchlist, saveWatchlist, deleteWatchlistItem, syncTastytradeWatchlists,
+    requestWatchlist, saveWatchlist, deleteWatchlistItem,
+    createWatchlist: createWatchlistFn, deleteWatchlist: deleteWatchlistFn, renameWatchlist: renameWatchlistFn,
+    syncTastytradeWatchlists,
     searchSymbols: searchSymbolsFn, sendChatMessage, clearChat,
     saveScheduleConfig, requestScheduleConfig, requestBudgetStatus,
     requestReports, runAnalysisNow,
