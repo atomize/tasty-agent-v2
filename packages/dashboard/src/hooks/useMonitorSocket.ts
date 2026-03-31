@@ -3,7 +3,7 @@ import type {
   TickerSnapshot, OptionsAlert, AccountContext, OptionChainResponse,
   AgentAnalysis, AgentStatus, AgentConfigResponse,
   Watchlist, ChatMessage, ScheduleConfigResponse, BudgetStatus, AnalysisReport,
-  WatchlistItem, ScheduleConfig,
+  WatchlistItem, ScheduleConfig, WatchlistProposal,
   PaperAccount, PaperPosition, PaperOrder,
 } from '@tastytrade-monitor/shared'
 
@@ -49,8 +49,10 @@ export interface MonitorState {
   renameWatchlist: (oldName: string, newName: string) => void
   syncTastytradeWatchlists: () => void
   searchSymbols: (query: string) => void
-  sendChatMessage: (message: string) => void
+  sendChatMessage: (message: string, context?: 'general' | 'watchlist_builder', activeWatchlist?: string) => void
   clearChat: () => void
+  watchlistProposal: WatchlistProposal | null
+  clearProposal: () => void
   saveScheduleConfig: (config: Partial<ScheduleConfig>) => void
   requestScheduleConfig: () => void
   requestBudgetStatus: () => void
@@ -109,6 +111,7 @@ export function useMonitorSocket(): MonitorState {
   const [paperAccount, setPaperAccount] = useState<PaperAccount | null>(null)
   const [paperPositions, setPaperPositions] = useState<PaperPosition[]>([])
   const [paperOrders, setPaperOrders] = useState<PaperOrder[]>([])
+  const [watchlistProposal, setWatchlistProposal] = useState<WatchlistProposal | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -226,9 +229,9 @@ export function useMonitorSocket(): MonitorState {
     }
   }, [])
 
-  const sendChatMessage = useCallback((message: string) => {
+  const sendChatMessage = useCallback((message: string, context?: 'general' | 'watchlist_builder', activeWatchlist?: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'chat_send', data: { message } }))
+      wsRef.current.send(JSON.stringify({ type: 'chat_send', data: { message, context, activeWatchlist } }))
     }
   }, [])
 
@@ -236,7 +239,12 @@ export function useMonitorSocket(): MonitorState {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'chat_clear' }))
       setChatMessages([])
+      setWatchlistProposal(null)
     }
+  }, [])
+
+  const clearProposal = useCallback(() => {
+    setWatchlistProposal(null)
   }, [])
 
   const saveScheduleConfig = useCallback((cfg: Partial<ScheduleConfig>) => {
@@ -403,6 +411,9 @@ export function useMonitorSocket(): MonitorState {
           case 'paper_trade_executed':
             setPaperOrders(prev => [msg.data, ...prev].slice(0, 50))
             break
+          case 'watchlist_proposal':
+            setWatchlistProposal(msg.data)
+            break
         }
       } catch {
         // ignore malformed messages
@@ -444,7 +455,7 @@ export function useMonitorSocket(): MonitorState {
     requestWatchlist, saveWatchlist, deleteWatchlistItem,
     createWatchlist: createWatchlistFn, deleteWatchlist: deleteWatchlistFn, renameWatchlist: renameWatchlistFn,
     syncTastytradeWatchlists,
-    searchSymbols: searchSymbolsFn, sendChatMessage, clearChat,
+    searchSymbols: searchSymbolsFn, sendChatMessage, clearChat, watchlistProposal, clearProposal,
     saveScheduleConfig, requestScheduleConfig, requestBudgetStatus,
     requestReports, runAnalysisNow,
     paperAccount, paperPositions, paperOrders,

@@ -217,6 +217,15 @@ export const WatchlistSchema = z.object({
 })
 export type Watchlist = z.infer<typeof WatchlistSchema>
 
+export const WatchlistProposalSchema = z.object({
+  name: z.string(),
+  sector: z.string().optional(),
+  layers: z.array(z.string()),
+  items: z.array(WatchlistItemSchema.omit({ sortOrder: true }).extend({ sortOrder: z.number().optional() })),
+  reasoning: z.string().optional(),
+})
+export type WatchlistProposal = z.infer<typeof WatchlistProposalSchema>
+
 // ─── Chat schemas ────────────────────────────────────────────────
 
 export const ChatMessageSchema = z.object({
@@ -406,6 +415,7 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('reports_data'), data: z.array(AnalysisReportSchema) }),
   z.object({ type: z.literal('new_report'), data: AnalysisReportSchema }),
   z.object({ type: z.literal('agent_config_error'), data: z.object({ error: z.string() }) }),
+  z.object({ type: z.literal('watchlist_proposal'), data: WatchlistProposalSchema }),
   z.object({ type: z.literal('paper_account'), data: PaperAccountSchema }),
   z.object({ type: z.literal('paper_positions'), data: z.array(PaperPositionSchema) }),
   z.object({ type: z.literal('paper_orders'), data: z.array(PaperOrderSchema) }),
@@ -467,7 +477,11 @@ export const WsClientMessageSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('chat_send'),
-    data: z.object({ message: z.string() }),
+    data: z.object({
+      message: z.string(),
+      context: z.enum(['general', 'watchlist_builder']).optional(),
+      activeWatchlist: z.string().optional(),
+    }),
   }),
   z.object({
     type: z.literal('chat_clear'),

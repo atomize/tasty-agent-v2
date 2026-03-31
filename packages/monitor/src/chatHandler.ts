@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { ChatMessage } from '@tastytrade-monitor/shared'
+import type { ChatMessage, WatchlistProposal } from '@tastytrade-monitor/shared'
 import { getAllSnapshots } from './state.js'
 import { getAccountContext } from './account.js'
 import { getUserWatchlistsWithItems } from './watchlistService.js'
@@ -120,6 +120,235 @@ export async function handleChatMessage(userId: number, message: string): Promis
       costUsd: 0,
     }
   }
+}
+
+export interface WatchlistChatResult {
+  message: ChatMessage
+  proposal: WatchlistProposal | null
+}
+
+export async function handleWatchlistChat(
+  userId: number,
+  message: string,
+  activeWatchlist?: string,
+): Promise<WatchlistChatResult> {
+  log.info(`WatchlistChat: user ${userId} sent message (${message.length} chars)`)
+
+  const { allowed, remaining } = checkBudget(userId)
+  if (!allowed) {
+    return {
+      message: {
+        id: randomUUID(),
+        role: 'assistant',
+        content: `Daily budget exhausted ($${remaining.toFixed(2)} remaining). Chat is paused until midnight CT.`,
+        timestamp: new Date().toISOString(),
+        costUsd: 0,
+      },
+      proposal: null,
+    }
+  }
+
+  const agentCfg = getAgentConfig(userId)
+  if (!agentCfg?.encrypted_api_key) {
+    return {
+      message: {
+        id: randomUUID(),
+        role: 'assistant',
+        content: 'No Claude API key configured. Go to Settings to set up your API key.',
+        timestamp: new Date().toISOString(),
+        costUsd: 0,
+      },
+      proposal: null,
+    }
+  }
+
+  let history = conversations.get(userId)
+  if (!history && isEncryptionEnabled()) {
+    const rows = getChatHistoryDb(userId)
+    history = rows.map(r => ({ role: r.role, content: r.content }))
+  }
+  if (!history) history = []
+  history.push({ role: 'user', content: message })
+  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY)
+  conversations.set(userId, history)
+
+  if (isEncryptionEnabled()) {
+    try { appendChatMessage(userId, 'user', message) } catch { /* best-effort */ }
+  }
+
+  try {
+    const apiKey = decrypt(agentCfg.encrypted_api_key)
+    const systemPrompt = buildWatchlistSystemPrompt(userId, activeWatchlist)
+
+    const { chatDirect } = await import('@tastytrade-monitor/claude-agent/invoke-direct')
+    const result = await chatDirect(history, {
+      apiKey,
+      model: agentCfg.model,
+      systemPrompt,
+      maxTokens: 4096,
+    })
+
+    const costEstimate = estimateCost(result.inputTokens, result.outputTokens, agentCfg.model)
+    trackUsage(userId, 'chat', costEstimate, result.inputTokens, result.outputTokens)
+
+    history.push({ role: 'assistant', content: result.text })
+    if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY)
+    conversations.set(userId, history)
+
+    if (isEncryptionEnabled()) {
+      try { appendChatMessage(userId, 'assistant', result.text) } catch { /* best-effort */ }
+    }
+
+    const proposal = extractProposal(result.text)
+    const displayText = stripProposalBlock(result.text)
+
+    log.info(`WatchlistChat: user ${userId} response (${result.outputTokens} tokens, $${costEstimate.toFixed(4)}, proposal: ${proposal ? 'yes' : 'no'})`)
+
+    return {
+      message: {
+        id: randomUUID(),
+        role: 'assistant',
+        content: displayText,
+        timestamp: new Date().toISOString(),
+        costUsd: costEstimate,
+      },
+      proposal,
+    }
+  } catch (err) {
+    const errMsg = (err as Error).message
+    log.error(`WatchlistChat failed for user ${userId}: ${errMsg}`)
+    return {
+      message: {
+        id: randomUUID(),
+        role: 'assistant',
+        content: `Error: ${errMsg}`,
+        timestamp: new Date().toISOString(),
+        costUsd: 0,
+      },
+      proposal: null,
+    }
+  }
+}
+
+function extractProposal(text: string): WatchlistProposal | null {
+  const match = text.match(/```watchlist_proposal\s*\n([\s\S]*?)\n```/)
+  if (!match) return null
+  try {
+    const raw = JSON.parse(match[1])
+    const items = (raw.items ?? []).map((item: Record<string, unknown>, idx: number) => ({
+      ticker: String(item.ticker ?? '').toUpperCase(),
+      description: item.description ? String(item.description) : undefined,
+      layer: item.layer != null ? String(item.layer) : null,
+      strategies: Array.isArray(item.strategies) ? item.strategies.map(String) : [],
+      thesis: String(item.thesis ?? ''),
+      instrumentType: String(item.instrumentType ?? 'equity') as 'equity' | 'crypto',
+      sortOrder: typeof item.sortOrder === 'number' ? item.sortOrder : idx,
+    }))
+    return {
+      name: String(raw.name ?? 'Untitled'),
+      sector: raw.sector ? String(raw.sector) : undefined,
+      layers: Array.isArray(raw.layers) ? raw.layers.map(String) : [],
+      items,
+      reasoning: raw.reasoning ? String(raw.reasoning) : undefined,
+    }
+  } catch (err) {
+    log.warn(`Failed to parse watchlist proposal: ${(err as Error).message}`)
+    return null
+  }
+}
+
+function stripProposalBlock(text: string): string {
+  return text.replace(/```watchlist_proposal\s*\n[\s\S]*?\n```/g, '').trim()
+}
+
+function buildWatchlistSystemPrompt(userId: number, activeWatchlist?: string): string {
+  const watchlists = getUserWatchlistsWithItems(userId)
+  const allSnapshots = getAllSnapshots()
+
+  const sections: string[] = []
+
+  sections.push(`You are an expert equity research analyst and watchlist builder for an options trading platform.
+
+Your job is to help the user build, refine, and populate sector-focused watchlists. Each watchlist represents a thematic investment thesis organized into layers (sub-categories within the sector).
+
+## How a Great Watchlist Is Structured
+
+Here is the pattern — every watchlist should follow this structure:
+- **Name**: The sector or thesis (e.g. "AI Supply Chain", "Quantum Computing", "EV Battery Supply Chain")
+- **Layers**: Sub-categories that decompose the sector into its component parts (3-8 layers)
+- **Items**: Each ticker has:
+  - \`ticker\`: Valid US equity symbol (MUST be real, publicly traded)
+  - \`description\`: Company name
+  - \`layer\`: Which sub-category this company belongs to
+  - \`strategies\`: Array of ["supply_chain", "midterm_macro", "crypto"]
+  - \`thesis\`: 1-2 sentences on WHY this company matters to the thesis, what its moat/catalyst is
+  - \`instrumentType\`: "equity" or "crypto"
+
+## Example: AI Supply Chain (7-Layer Model)
+This is the gold standard. Layers decompose from silicon to power:
+- Layer 1 — Chip Packaging (AMKR, CAMT, ACMR)
+- Layer 2 — Optical Interconnects (FN, CIEN, LITE)
+- Layer 3 — Signal Integrity (ALAB, CRDO, MRVL)
+- Layer 4 — Rack & DC Construction (CLS, EME, CSCO)
+- Layer 5 — Thermal & Power (VRT, MOHN, NVT)
+- Layer 6 — Raw Materials (FCX, COPX, MP)
+- Layer 7 — Nuclear/Uranium (CEG, CCJ, UEC, TLN)
+
+Each ticker has a specific thesis: "AMKR — 2.5D advanced packaging, TSMC alternative, Arizona + Vietnam expansion"
+
+## Instructions
+
+When the user asks you to build or research a watchlist:
+
+1. **Research the sector** — identify the key sub-categories/layers that decompose the supply chain or industry
+2. **Find real tickers** — ONLY use real, publicly traded US equity symbols. Verify they trade on NYSE/NASDAQ.
+3. **Assign layers** — place each ticker in its appropriate sub-category
+4. **Write thesis** — 1-2 sentences per ticker explaining the investment thesis, moat, and current catalyst
+5. **Output a proposal** — include a \`\`\`watchlist_proposal code block with structured JSON
+
+When the user asks to add tickers to an existing watchlist, modify an existing list, or asks about companies in a sector, always include the proposal block if actionable.
+
+## Proposal Format
+
+When you have actionable changes, include this EXACT format in your response:
+
+\`\`\`watchlist_proposal
+{
+  "name": "Sector Name",
+  "sector": "Template Category",
+  "layers": ["Sub-Category 1", "Sub-Category 2"],
+  "items": [
+    {
+      "ticker": "SYMBOL",
+      "description": "Company Name",
+      "layer": "Sub-Category 1",
+      "strategies": ["supply_chain"],
+      "thesis": "Why this company matters...",
+      "instrumentType": "equity"
+    }
+  ],
+  "reasoning": "Brief explanation of the thesis"
+}
+\`\`\`
+
+ALWAYS include the proposal block when the user is asking you to build, add to, or modify a watchlist. The proposal block is machine-parsed and presented to the user as a reviewable card.
+
+If the user is just asking questions (not requesting changes), respond normally without a proposal block.`)
+
+  if (watchlists.length > 0) {
+    sections.push('\n## User\'s Current Watchlists')
+    for (const wl of watchlists) {
+      const highlight = wl.name === activeWatchlist ? ' (ACTIVE — user is viewing this one)' : ''
+      sections.push(`\n### ${wl.name}${highlight} — ${wl.items.length} items`)
+      for (const item of wl.items) {
+        const snap = allSnapshots.find(s => s.ticker === item.ticker)
+        const price = snap && snap.price > 0 ? ` $${snap.price.toFixed(2)}` : ''
+        sections.push(`- ${item.ticker}${price} [${item.layer ?? '-'}] — ${item.thesis || 'no thesis'}`)
+      }
+    }
+  }
+
+  return sections.join('\n')
 }
 
 export function clearChatHistory(userId: number): void {

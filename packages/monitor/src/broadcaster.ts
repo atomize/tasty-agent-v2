@@ -22,7 +22,7 @@ import type { JwtPayload } from './auth.js'
 import { handleOAuthRoute, getEnabledOAuthProviders } from './oauth.js'
 import { getUserWatchlistsWithItems, saveWatchlist, removeWatchlistItem, syncFromTastytrade, searchSymbols, createWatchlist, deleteWatchlist, renameWatchlist } from './watchlistService.js'
 import { getBudgetStatus } from './budgetTracker.js'
-import { handleChatMessage, clearChatHistory } from './chatHandler.js'
+import { handleChatMessage, handleWatchlistChat, clearChatHistory } from './chatHandler.js'
 import { runScheduledAnalysis } from './scheduledAnalysis.js'
 
 let wss: WebSocketServer | null = null
@@ -499,7 +499,7 @@ async function handleSearchSymbols(ws: WebSocket, query: string): Promise<void> 
 
 // ─── Chat handlers ──────────────────────────────────────────────
 
-async function handleChatSend(ws: WebSocket, message: string): Promise<void> {
+async function handleChatSend(ws: WebSocket, message: string, context?: string, activeWatchlist?: string): Promise<void> {
   const auth = clientAuth.get(ws)
   if (!auth) return
 
@@ -508,9 +508,17 @@ async function handleChatSend(ws: WebSocket, message: string): Promise<void> {
     data: { id: `user-${Date.now()}`, role: 'user', content: message, timestamp: new Date().toISOString() },
   } as WsMessage)
 
-  const response = await handleChatMessage(auth.userId, message)
-  if (response) {
-    send(ws, { type: 'chat_message', data: response } as WsMessage)
+  if (context === 'watchlist_builder') {
+    const result = await handleWatchlistChat(auth.userId, message, activeWatchlist)
+    send(ws, { type: 'chat_message', data: result.message } as WsMessage)
+    if (result.proposal) {
+      send(ws, { type: 'watchlist_proposal', data: result.proposal } as WsMessage)
+    }
+  } else {
+    const response = await handleChatMessage(auth.userId, message)
+    if (response) {
+      send(ws, { type: 'chat_message', data: response } as WsMessage)
+    }
   }
 }
 
@@ -831,8 +839,13 @@ const authenticatedWsRoutes: Record<string, AuthenticatedWsRoute> = {
   async chat_send(ws, msg) {
     const data = msg.data
     if (data && typeof data === 'object' && !Array.isArray(data)) {
-      const m = (data as Record<string, unknown>).message
-      if (typeof m === 'string') await handleChatSend(ws, m)
+      const d = data as Record<string, unknown>
+      const m = d.message
+      if (typeof m === 'string') {
+        const context = typeof d.context === 'string' ? d.context : undefined
+        const activeWatchlist = typeof d.activeWatchlist === 'string' ? d.activeWatchlist : undefined
+        await handleChatSend(ws, m, context, activeWatchlist)
+      }
     }
   },
 
