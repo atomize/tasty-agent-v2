@@ -56,7 +56,7 @@ export function App() {
     requestWatchlist, saveWatchlist, deleteWatchlistItem,
     createWatchlist, deleteWatchlist, renameWatchlist,
     syncTastytradeWatchlists,
-    searchSymbols, sendChatMessage, clearChat,
+    searchSymbols, sendChatMessage, clearChat, watchlistProposal, clearProposal,
     saveScheduleConfig, requestScheduleConfig, requestBudgetStatus,
     requestReports, runAnalysisNow,
     requestPaperState, paperConfigure, paperClosePosition, paperReset,
@@ -152,6 +152,8 @@ export function App() {
           <WatchlistBuilder
             watchlists={watchlists}
             searchResults={searchResults}
+            chatMessages={chatMessages}
+            watchlistProposal={watchlistProposal}
             onRequestWatchlist={requestWatchlist}
             onSave={saveWatchlist}
             onDelete={deleteWatchlistItem}
@@ -160,6 +162,9 @@ export function App() {
             onRenameWatchlist={renameWatchlist}
             onSync={syncTastytradeWatchlists}
             onSearch={searchSymbols}
+            onChatSend={sendChatMessage}
+            onChatClear={clearChat}
+            onClearProposal={clearProposal}
           />
         )}
         {activeTab === 'options' && <OptionChainPanel snapshots={snapshots} optionChain={optionChain} requestChain={requestChain} env={env} />}
@@ -204,8 +209,8 @@ export function App() {
         )}
       </main>
 
-      {/* Floating Chat */}
-      {multiTenant && authUser && (
+      {/* Floating Chat (hidden on watchlist builder — chat is embedded there) */}
+      {multiTenant && authUser && activeTab !== 'watchlist_builder' && (
         <>
           {chatOpen ? (
             <ChatPanel
